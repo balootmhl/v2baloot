@@ -1,0 +1,30 @@
+# Maintainer: Moe Hein Latt <baloot.mhl@gmail.com>
+# Prebuilt v2baloot from the GitHub release (built by CI from the tagged source).
+# Run ./update.sh <version> to bump pkgver and the checksum, then publish to the AUR.
+pkgname=v2baloot-bin
+_pkgname=v2baloot
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xray (V2Ray) client for Omarchy: GTK4 GUI, tray, TUI, Waybar and Walker integration (prebuilt)"
+arch=('x86_64')
+url="https://github.com/balootmhl/v2baloot"
+license=('MIT')
+depends=('xray' 'gtk4' 'libadwaita' 'wl-clipboard' 'libnotify' 'polkit' 'systemd' 'util-linux' 'gcc-libs' 'glibc')
+optdepends=(
+  'walker: server picker (v2baloot menu)'
+  'waybar: status indicator and tray'
+  'xdg-terminal-exec: open the TUI from Waybar/tray'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+install=v2baloot.install
+source=("$_pkgname-$pkgver-1-x86_64.pkg.tar.zst::$url/releases/download/v$pkgver/$_pkgname-$pkgver-1-x86_64.pkg.tar.zst")
+noextract=("$_pkgname-$pkgver-1-x86_64.pkg.tar.zst")
+sha256sums=('SKIP')
+
+package() {
+  bsdtar -xf "$srcdir/$_pkgname-$pkgver-1-x86_64.pkg.tar.zst" -C "$pkgdir" --exclude '.PKGINFO' --exclude '.MTREE' --exclude '.BUILDINFO' --exclude '.INSTALL'
+  # rules.d belongs to polkit as 750 root:polkitd (gid 102).
+  chown root:102 "$pkgdir/usr/share/polkit-1/rules.d"
+  chmod 750 "$pkgdir/usr/share/polkit-1/rules.d"
+}

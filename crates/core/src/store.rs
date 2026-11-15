@@ -46,6 +46,8 @@ pub struct Settings {
     pub conn_idle_secs: u32,
     /// Look up the exit IP/country through the tunnel after connecting.
     pub show_exit_ip: bool,
+    /// TUN mode: block internet traffic while the tunnel is down instead of letting it leak.
+    pub tun_kill_switch: bool,
     /// Bind proxy traffic to a specific network interface (e.g. `wlan0`); empty = system routing.
     pub outbound_interface: Option<String>,
 }
@@ -76,6 +78,7 @@ impl Default for Settings {
             conn_idle_secs: 30,
             outbound_interface: None,
             show_exit_ip: true,
+            tun_kill_switch: true,
         }
     }
 }

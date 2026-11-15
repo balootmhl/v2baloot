@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # v2baloot installer for Omarchy / Arch Linux.
 #
-#   ./install.sh              build + install the package, enable the daemon, offer Omarchy integration
+#   ./install.sh              install the package (prebuilt when on a release tag), enable the daemon,
+#                             offer Omarchy integration
+#   ./install.sh --build      always build from source instead of using a prebuilt package
 #   ./install.sh --integrate  only add the Waybar module and Hyprland keybindings
 #   ./install.sh --yes        don't ask before editing Waybar/Hyprland config
 set -euo pipefail
@@ -10,11 +12,14 @@ cd "$(dirname "$0")"
 ROOT="$PWD"
 ASSUME_YES=0
 ONLY_INTEGRATE=0
+FORCE_BUILD=0
+REPO_URL="https://github.com/balootmhl/v2baloot"
 for a in "$@"; do
   case "$a" in
+    --build) FORCE_BUILD=1 ;;
     --yes|-y) ASSUME_YES=1 ;;
     --integrate) ONLY_INTEGRATE=1 ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -33,33 +38,65 @@ if [[ ! -f /etc/arch-release ]]; then
   exit 1
 fi
 
-install_package() {
-  say "Building and installing the v2baloot package (makepkg)…"
-  command -v cargo >/dev/null || sudo pacman -S --needed --noconfirm rust
+ensure_xray() {
   # xray is not in the official repos, only in the AUR. xray-bin (official release binary,
   # provides `xray`) avoids a Go build.
-  if ! pacman -T xray >/dev/null; then
-    local aur=""
-    for h in yay paru; do
-      if command -v "$h" >/dev/null; then aur=$h; break; fi
-    done
-    if [[ -z $aur ]]; then
-      echo "xray is only available in the AUR. Install it first (e.g. 'yay -S xray-bin'), then re-run." >&2
-      exit 1
-    fi
-    say "Installing xray from the AUR (xray-bin) with $aur…"
-    # No --noconfirm: the AUR helper shows the PKGBUILD for review — its xray binary later
-    # runs under a root unit.
-    "$aur" -S --needed xray-bin
+  pacman -T xray >/dev/null && return 0
+  local aur=""
+  for h in yay paru; do
+    if command -v "$h" >/dev/null; then aur=$h; break; fi
+  done
+  if [[ -z $aur ]]; then
+    echo "xray is only available in the AUR. Install it first (e.g. 'yay -S xray-bin'), then re-run." >&2
+    exit 1
   fi
+  say "Installing xray from the AUR (xray-bin) with $aur…"
+  # No --noconfirm: the AUR helper shows the PKGBUILD for review — its xray binary later
+  # runs under a root unit.
+  "$aur" -S --needed xray-bin
+}
+
+# On a release tag, install the package CI built for it: seconds instead of a Rust build.
+install_prebuilt() {
+  [[ $FORCE_BUILD == 0 && $(uname -m) == x86_64 ]] || return 1
+  local tag
+  tag=$(git -C "$ROOT" describe --tags --exact-match 2>/dev/null) || return 1
+  [[ $tag =~ ^v[0-9A-Za-z.+-]+$ ]] || return 1
+  local base="$REPO_URL/releases/download/$tag" tmp pkg
+  tmp=$(mktemp -d)
+  # shellcheck disable=SC2064  # expand now: $tmp is local
+  trap "rm -rf '$tmp'" EXIT
+  say "Downloading the prebuilt package for $tag…"
+  curl -fsSL --proto '=https' "$base/sha256sums.txt" -o "$tmp/sha256sums.txt" || {
+    warn "No prebuilt package for $tag; building from source."
+    return 1
+  }
+  pkg=$(awk '{print $2}' "$tmp/sha256sums.txt" | grep -m1 -E '^v2baloot-[0-9A-Za-z.+_-]+-x86_64\.pkg\.tar\.zst$') || return 1
+  curl -fsSL --proto '=https' "$base/$pkg" -o "$tmp/$pkg" || return 1
+  if ! (cd "$tmp" && grep -F " $pkg" sha256sums.txt | sha256sum -c --quiet -); then
+    warn "Checksum mismatch for $pkg; building from source instead."
+    return 1
+  fi
+  sudo pacman -U --noconfirm "$tmp/$pkg"
+}
+
+build_from_source() {
+  say "Building the v2baloot package from source (makepkg)…"
+  command -v cargo >/dev/null || sudo pacman -S --needed --noconfirm rust
   # No --needed: a rebuild with the same pkgver must still replace the installed binaries.
   # --nocheck: skip compiling the test suite (CI runs it); the build cache in target/makepkg
   # makes later updates incremental.
   (cd packaging && makepkg -si --noconfirm --nocheck)
   rm -rf packaging/src packaging/pkg packaging/*.pkg.tar.zst
+}
+
+install_package() {
+  ensure_xray
+  install_prebuilt || build_from_source
   say "Enabling the user daemon…"
   systemctl --user daemon-reload
   systemctl --user enable --now v2baloot.service
+  systemctl --user restart v2baloot.service
 }
 
 integrate_hyprland() {

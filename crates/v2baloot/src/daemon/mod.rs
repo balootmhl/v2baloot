@@ -975,6 +975,10 @@ impl Daemon {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut clocks = (std::time::SystemTime::now(), std::time::Instant::now());
+        // TUN kill switch: the root helper restarts a dead xray itself while traffic is blocked;
+        // we notice through the stats API and show "connecting" meanwhile.
+        let mut stats_failures = 0u32;
+        let mut reconnecting = false;
         loop {
             tick.tick().await;
             let now = (std::time::SystemTime::now(), std::time::Instant::now());
@@ -988,7 +992,9 @@ impl Daemon {
             }
             let (xray_path, api_port, gen, tun_on) = {
                 let g = self.inner.lock().await;
-                if !g.status.is_connected() {
+                if !g.status.is_connected() && !(reconnecting && g.tun_on) {
+                    reconnecting = false;
+                    stats_failures = 0;
                     continue;
                 }
                 (
@@ -1012,11 +1018,31 @@ impl Daemon {
                 continue;
             }
             let Ok((up, down)) = stats::query(&xray_path, api_port).await else {
+                stats_failures += 1;
+                if tun_on && stats_failures >= 3 && !reconnecting {
+                    let mut g = self.inner.lock().await;
+                    if g.generation == gen && g.status.is_connected() {
+                        g.status.state = ConnState::Connecting;
+                        g.status.up_speed = 0;
+                        g.status.down_speed = 0;
+                        self.emit_status(&g);
+                        reconnecting = true;
+                    }
+                }
                 continue;
             };
+            stats_failures = 0;
             let mut g = self.inner.lock().await;
             if g.generation != gen {
                 continue;
+            }
+            if reconnecting {
+                reconnecting = false;
+                if g.tun_on && g.status.state == ConnState::Connecting {
+                    g.status.state = ConnState::Connected;
+                    // xray restarted, so its counters did too.
+                    g.last_totals = None;
+                }
             }
             if let Some((pu, pd)) = g.last_totals {
                 g.status.up_speed = up.saturating_sub(pu);

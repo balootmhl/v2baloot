@@ -414,7 +414,8 @@ impl Dashboard {
         }
 
         self.exit.set_reveal_child(connected);
-        match &s.exit {
+        let exit = demo_exit().or_else(|| s.exit.clone());
+        match &exit {
             Some(e) => {
                 self.exit_flag
                     .set_label(&country_flag(&e.country_code).unwrap_or_else(|| "🌐".into()));
@@ -501,6 +502,20 @@ impl Dashboard {
         }
         set_class(&self.sub, &["error"], class);
     }
+}
+
+/// Development aid for screenshots: `V2BALOOT_DEMO_EXIT="SG|Singapore|Singapore|203.0.113.10|Example Cloud"`
+/// replaces the exit card so published screenshots never show a real server's IP or provider.
+fn demo_exit() -> Option<v2baloot_core::ExitInfo> {
+    let v = std::env::var("V2BALOOT_DEMO_EXIT").ok()?;
+    let f: Vec<&str> = v.split('|').collect();
+    (f.len() == 5).then(|| v2baloot_core::ExitInfo {
+        country_code: f[0].into(),
+        country: f[1].into(),
+        city: f[2].into(),
+        ip: f[3].into(),
+        isp: f[4].into(),
+    })
 }
 
 /// Keep the session timer ticking.

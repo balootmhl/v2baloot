@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### TUN kill switch
+- In TUN mode, if Xray stops, internet traffic is blocked instead of leaving outside the tunnel. The root helper restarts Xray on its own (1–30 s backoff), and the app shows "connecting" until it's back. It is on by default; Preferences → Kill switch.
+
+### Installing
+- Each release tag now gets a prebuilt Arch package from CI. On a release tag, `install.sh` installs it in seconds after checking its checksum; `--build` builds from source.
+- An AUR package `v2baloot-bin` (in `packaging/aur/`).
+- CI runs fmt, clippy and tests on every push and pull request.
+
+### Docs
+- New README with screenshots, plus SECURITY.md, CONTRIBUTING.md and issue templates.
+
 ## v0.1.0-beta.2 — 2026-11-16
 
 ### Fixes

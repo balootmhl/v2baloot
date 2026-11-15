@@ -389,6 +389,7 @@ fn merge_changed(target: &mut Settings, opened: &Settings, edited: &Settings) {
         conn_idle_secs,
         outbound_interface,
         show_exit_ip,
+        tun_kill_switch,
     );
 }
 
@@ -429,6 +430,12 @@ fn show_preferences(ui: &Rc<Ui>, s: Settings) {
     conn.add(&system_proxy);
     conn.add(&bypass);
     conn.add(&autoconnect);
+    let kill_switch = switch(
+        "Kill switch (TUN)",
+        "Block internet traffic while the tunnel is down instead of letting it bypass the VPN",
+        s.tun_kill_switch,
+    );
+    conn.add(&kill_switch);
     general.add(&conn);
 
     let subs = adw::PreferencesGroup::builder()
@@ -553,6 +560,7 @@ fn show_preferences(ui: &Rc<Ui>, s: Settings) {
         n.notifications = notifications.is_active();
         n.waybar_show_name = waybar_name.is_active();
         n.show_exit_ip = exit_ip.is_active();
+        n.tun_kill_switch = kill_switch.is_active();
         n.socks_port = socks.value() as u16;
         n.http_port = http.value() as u16;
         n.api_port = api.value() as u16;
