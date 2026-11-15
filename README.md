@@ -43,20 +43,17 @@
 - Xray-core 26.x from the AUR (`xray-bin`). The installer handles it.
 - Being in `wheel` (the Omarchy default), for password-less TUN mode.
 
-### AUR (recommended)
-
-```bash
-yay -S v2baloot-bin
-systemctl --user enable --now v2baloot
-```
-
-### Installer script
+### Installer script (recommended)
 
 ```bash
 git clone https://github.com/balootmhl/v2baloot.git && cd v2baloot
 git checkout v0.1.0      # a release tag → installs the prebuilt package in seconds
 ./install.sh
 ```
+
+### AUR
+
+`v2baloot-bin` is coming to the AUR as soon as AUR account registration reopens; the package is ready in [`packaging/aur/`](packaging/aur/).
 
 `install.sh` does the following:
 - Installs `xray-bin` from the AUR. It shows you the PKGBUILD first.
