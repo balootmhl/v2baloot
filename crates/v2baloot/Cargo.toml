@@ -1,0 +1,23 @@
+[package]
+name = "v2baloot"
+description = "Xray client for Omarchy: daemon, CLI, TUI, tray, Waybar and Walker integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+v2baloot-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+futures.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+libc = "0.2"
+ksni = "0.3"

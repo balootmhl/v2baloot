@@ -1,0 +1,34 @@
+# TUN mode for user %i. Started/stopped by that user's v2baloot daemon (allowed by the polkit rule).
+# The helper rebuilds the Xray config from the selected server only, never runs a user-supplied
+# config, and runs Xray itself as `nobody` with only CAP_NET_ADMIN/CAP_NET_RAW.
+[Unit]
+Description=v2baloot TUN mode for %i
+After=network-online.target systemd-resolved.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/v2baloot tun-run --user %i
+ExecStopPost=/usr/bin/v2baloot tun-run --user %i --cleanup
+Restart=no
+# SIGTERM goes to the helper only; it stops Xray and removes routes itself.
+KillMode=mixed
+TimeoutStopSec=10
+Environment=RUST_LOG=info
+RuntimeDirectory=v2baloot
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+# NET_*: routes, TUN, SO_MARK. DAC_READ_SEARCH: read the request in the user's home.
+# SETUID/SETGID/SETPCAP: setpriv dropping Xray to nobody with ambient NET_ADMIN.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SETPCAP
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+LockPersonality=yes
+MemoryMax=512M

@@ -1,0 +1,15 @@
+/* Append to ~/.config/waybar/style.css */
+#custom-v2baloot {
+  margin: 0 7.5px;
+  min-width: 12px;
+}
+#custom-v2baloot.disconnected,
+#custom-v2baloot.offline {
+  opacity: 0.45;
+}
+#custom-v2baloot.connecting {
+  opacity: 0.7;
+}
+#custom-v2baloot.error {
+  color: #f7768e;
+}

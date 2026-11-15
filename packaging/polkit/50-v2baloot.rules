@@ -1,0 +1,14 @@
+// Let members of `wheel` start/stop *their own* v2baloot TUN unit without a password prompt,
+// so TUN mode can be toggled from Waybar, the tray or a keybinding.
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units" || !subject.isInGroup("wheel")) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (unit === "v2baloot-tun@" + subject.user + ".service" &&
+        (verb === "start" || verb === "stop" || verb === "restart")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

@@ -1,0 +1,63 @@
+# Maintainer: Moe Hein Latt <baloot.mhl@gmail.com>
+# Local build: run `makepkg -si` inside this packaging/ directory.
+pkgname=v2baloot
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xray (V2Ray) client for Omarchy: GTK4 GUI, tray, TUI, Waybar and Walker integration"
+arch=('x86_64' 'aarch64')
+url="https://github.com/balootmhl/v2baloot"
+license=('MIT')
+depends=('xray' 'gtk4' 'libadwaita' 'wl-clipboard' 'libnotify' 'polkit' 'systemd' 'util-linux' 'gcc-libs' 'glibc')
+makedepends=('cargo')
+optdepends=(
+  'walker: server picker (v2baloot menu)'
+  'waybar: status indicator and tray'
+  'xdg-terminal-exec: open the TUI from Waybar/tray'
+)
+install=v2baloot.install
+options=('!lto' '!debug')
+
+_root() { realpath "$startdir/.."; }
+
+prepare() {
+  cd "$(_root)"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$(_root)"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo build --frozen --release --workspace
+}
+
+check() {
+  cd "$(_root)"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$srcdir/target"
+  cargo test --frozen --release -p v2baloot-core
+}
+
+package() {
+  local root; root="$(_root)"
+  install -Dm755 "$srcdir/target/release/v2baloot" "$pkgdir/usr/bin/v2baloot"
+  install -Dm755 "$srcdir/target/release/v2baloot-gui" "$pkgdir/usr/bin/v2baloot-gui"
+
+  cd "$root/packaging"
+  install -Dm644 systemd/v2baloot.service "$pkgdir/usr/lib/systemd/user/v2baloot.service"
+  install -Dm644 systemd/v2baloot-tun@.service "$pkgdir/usr/lib/systemd/system/v2baloot-tun@.service"
+  # rules.d belongs to polkit as 750 root:polkitd (gid 102); match it to avoid pacman warnings.
+  install -d -m750 -o root -g 102 "$pkgdir/usr/share/polkit-1/rules.d"
+  install -m644 polkit/50-v2baloot.rules "$pkgdir/usr/share/polkit-1/rules.d/50-v2baloot.rules"
+  install -Dm644 org.omarchy.v2baloot.desktop "$pkgdir/usr/share/applications/org.omarchy.v2baloot.desktop"
+  install -Dm644 icons/hicolor/scalable/apps/org.omarchy.v2baloot.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/org.omarchy.v2baloot.svg"
+  for f in icons/hicolor/scalable/status/*.svg; do
+    install -Dm644 "$f" "$pkgdir/usr/share/icons/hicolor/scalable/status/$(basename "$f")"
+  done
+  install -Dm644 omarchy/hyprland.conf "$pkgdir/usr/share/v2baloot/hyprland.conf"
+  install -Dm644 omarchy/waybar-module.jsonc "$pkgdir/usr/share/v2baloot/waybar-module.jsonc"
+  install -Dm644 omarchy/waybar.css "$pkgdir/usr/share/v2baloot/waybar.css"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

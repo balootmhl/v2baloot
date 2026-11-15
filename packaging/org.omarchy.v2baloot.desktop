@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=v2baloot
+GenericName=Proxy Client
+Comment=Xray (V2Ray) client: VLESS, VMess, Trojan, Shadowsocks
+Exec=v2baloot-gui
+Icon=org.omarchy.v2baloot
+Terminal=false
+Categories=Network;
+Keywords=v2ray;xray;vpn;proxy;vless;vmess;trojan;shadowsocks;
+StartupNotify=true
+StartupWMClass=org.omarchy.v2baloot
+Actions=toggle;tui;
+
+[Desktop Action toggle]
+Name=Connect / Disconnect
+Exec=v2baloot toggle
+
+[Desktop Action tui]
+Name=Open in Terminal
+Exec=xdg-terminal-exec --app-id=org.omarchy.v2baloot.tui -e v2baloot tui

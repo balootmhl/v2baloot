@@ -1,0 +1,11 @@
+// Add "custom/v2baloot" to "modules-right" in ~/.config/waybar/config.jsonc and paste this block
+// next to the other module definitions.
+"custom/v2baloot": {
+  "exec": "v2baloot waybar",
+  "return-type": "json",
+  "restart-interval": 5,
+  "on-click": "v2baloot gui",
+  "on-click-middle": "xdg-terminal-exec --app-id=org.omarchy.v2baloot.tui -e v2baloot tui",
+  "on-click-right": "v2baloot toggle",
+  "tooltip": true
+}
