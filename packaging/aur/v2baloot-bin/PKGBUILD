@@ -20,7 +20,7 @@ conflicts=("$_pkgname")
 install=v2baloot.install
 source=("$_pkgname-$pkgver-1-x86_64.pkg.tar.zst::$url/releases/download/v$pkgver/$_pkgname-$pkgver-1-x86_64.pkg.tar.zst")
 noextract=("$_pkgname-$pkgver-1-x86_64.pkg.tar.zst")
-sha256sums=('SKIP')
+sha256sums=('71344c70a3038e317235f12c538c93e9fb5f10a9cdb4859789debe515f332254')
 
 package() {
   bsdtar -xf "$srcdir/$_pkgname-$pkgver-1-x86_64.pkg.tar.zst" -C "$pkgdir" --exclude '.PKGINFO' --exclude '.MTREE' --exclude '.BUILDINFO' --exclude '.INSTALL'
