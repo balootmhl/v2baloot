@@ -1,4 +1,5 @@
 post_install() {
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
   cat <<'MSG'
 ==> v2baloot installed. Per user, run once:
       systemctl --user enable --now v2baloot
@@ -8,5 +9,6 @@ MSG
 }
 
 post_upgrade() {
+  gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
   echo "==> Restart the daemon to use the new version: systemctl --user restart v2baloot"
 }

@@ -1,5 +1,5 @@
-/* v2baloot — append to ~/.config/waybar/style.css
- * The "b" logo comes from the installed symbolic icons, so it takes the bar's text colour. */
+/* >>> v2baloot >>> (managed by v2baloot's install.sh)
+ * The "b" logo PNGs are rendered by the daemon in the current Omarchy theme's text colour. */
 #custom-v2baloot {
   margin: 0 7.5px;
   min-width: 16px;
@@ -7,18 +7,19 @@
   background-repeat: no-repeat;
   background-position: left center;
   background-size: 16px 16px;
-  background-image: -gtk-icontheme("v2baloot-disconnected-symbolic");
+  background-image: url("@CACHE@/waybar/disconnected.png");
 }
 #custom-v2baloot.connected,
 #custom-v2baloot.connecting {
-  background-image: -gtk-icontheme("v2baloot-connected-symbolic");
+  background-image: url("@CACHE@/waybar/connected.png");
 }
 #custom-v2baloot.tun {
-  background-image: -gtk-icontheme("v2baloot-tun-symbolic");
+  background-image: url("@CACHE@/waybar/tun.png");
 }
 #custom-v2baloot.error {
-  background-image: -gtk-icontheme("v2baloot-error-symbolic");
+  background-image: url("@CACHE@/waybar/error.png");
 }
 #custom-v2baloot.connecting {
   opacity: 0.6;
 }
+/* <<< v2baloot <<< */

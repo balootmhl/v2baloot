@@ -115,3 +115,52 @@ mod tests {
         assert_eq!(human_bytes(1536), "1.5 KB");
     }
 }
+
+/// 🇸🇬 from "SG".
+pub fn country_flag(code: &str) -> Option<String> {
+    let code = code.trim();
+    if code.len() != 2 || !code.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some(
+        code.to_ascii_uppercase()
+            .chars()
+            .map(|c| char::from_u32(0x1F1E6 + (c as u32 - 'A' as u32)).unwrap())
+            .collect(),
+    )
+}
+
+fn is_regional(c: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&c)
+}
+
+/// A flag emoji already present in a server name ("🇯🇵 Tokyo 2" → "🇯🇵").
+pub fn flag_from_name(name: &str) -> Option<String> {
+    let chars: Vec<char> = name.chars().collect();
+    chars
+        .windows(2)
+        .find(|w| is_regional(w[0]) && is_regional(w[1]))
+        .map(|w| w.iter().collect())
+}
+
+/// The name without its flag emoji and surrounding separators.
+pub fn strip_flag(name: &str) -> String {
+    let stripped: String = name.chars().filter(|c| !is_regional(*c)).collect();
+    stripped
+        .trim_matches(|c: char| c.is_whitespace() || c == '|' || c == '-')
+        .to_string()
+}
+
+#[cfg(test)]
+mod flag_tests {
+    use super::*;
+
+    #[test]
+    fn flags() {
+        assert_eq!(country_flag("sg").as_deref(), Some("🇸🇬"));
+        assert_eq!(country_flag("SGP"), None);
+        assert_eq!(flag_from_name("🇯🇵 Tokyo 2").as_deref(), Some("🇯🇵"));
+        assert_eq!(flag_from_name("Tokyo"), None);
+        assert_eq!(strip_flag("🇯🇵 | Tokyo 2"), "Tokyo 2");
+    }
+}

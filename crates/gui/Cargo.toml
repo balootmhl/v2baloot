@@ -16,6 +16,6 @@ v2baloot-core.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 gtk = { package = "gtk4", version = "0.10", features = ["v4_12"] }
-adw = { package = "libadwaita", version = "0.8", features = ["v1_6"] }
+adw = { package = "libadwaita", version = "0.8", features = ["v1_7"] }
 async-channel = "2"
 toml.workspace = true
