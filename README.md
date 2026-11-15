@@ -1,8 +1,8 @@
 # v2baloot
 
-Omarchy (Arch Linux + Hyprland) အတွက် Xray (V2Ray) client တစ်ခုပါ။ Desktop GUI၊ tray icon၊ terminal UI၊ Waybar indicator နဲ့ Walker menu တို့ကို ပေါင်းပေးထားပါတယ်။ အားလုံးက daemon တစ်ခုတည်းကို ချိတ်သုံးကြလို့ GUI ပိတ်လိုက်လည်း connection ဆက်ရှိနေပါတယ်။
+An Xray (V2Ray) client for [Omarchy](https://omarchy.org) (Arch Linux + Hyprland). One background daemon owns the connection; the GTK4 window, tray icon, terminal UI, Waybar module, Walker menu and CLI all talk to it, so closing the window keeps you connected.
 
-An Xray client for Omarchy: one background daemon owns the connection, and the GTK4 window, tray icon, TUI, Waybar module, Walker menu and CLI all talk to it.
+> **Status: alpha (`v0.1.0-alpha.1`).** Proxy mode, the GUI, the TUI and the CLI have been tested end-to-end. TUN mode, the tray icon, the system proxy and the Arch package have not yet been tested on a real Omarchy install. Please report what breaks.
 
 | | |
 |---|---|
@@ -11,6 +11,12 @@ An Xray client for Omarchy: one background daemon owns the connection, and the G
 | Modes | **Proxy**: SOCKS5 `127.0.0.1:10808` + HTTP `:10809`, plus system proxy · **TUN**: every app, using Xray's native TUN |
 | Servers | Share links, clipboard import, subscriptions (base64 or plain, usage and expiry shown, auto-update) |
 | Latency | Real delay test through each server, run in parallel |
+
+## Requirements
+
+- Omarchy or another Arch Linux + Hyprland setup with systemd-resolved
+- Xray-core **26.x or newer** (the `xray` package; TUN mode needs its native TUN inbound)
+- Being in the `wheel` group for password-less TUN mode (the Omarchy default)
 
 ## Install (Omarchy)
 
@@ -26,7 +32,7 @@ git clone https://github.com/balootmhl/v2baloot.git && cd v2baloot
 
 ## Usage
 
-**ပထမဆုံး server ထည့်ခြင်း**
+**Add your first server**
 
 ```bash
 v2baloot sub add 'https://provider.example/sub/xxxx' -n "My VPN"   # subscription
