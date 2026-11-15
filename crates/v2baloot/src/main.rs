@@ -131,7 +131,15 @@ fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(run(cli))
+    if let Err(e) = rt.block_on(run(cli)) {
+        // Errors can quote subscription/server text: never send raw control characters to a terminal.
+        eprintln!(
+            "Error: {}",
+            v2baloot_core::util::clean_text(&format!("{e:#}"), 2000)
+        );
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -152,7 +160,9 @@ async fn run(cli: Cli) -> Result<()> {
                     ConnState::Connected => "connected".to_string(),
                     ConnState::Connecting => "connecting".to_string(),
                     ConnState::Disconnected => "disconnected".to_string(),
-                    ConnState::Error { message } => format!("error: {message}"),
+                    ConnState::Error { message } => {
+                        format!("error: {}", v2baloot_core::util::clean_text(message, 500))
+                    }
                 };
                 println!("State:  {state}");
                 println!("Mode:   {}", st.mode.label());
@@ -293,7 +303,7 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Logs => {
             if let Reply::Logs { lines } = client.call(&Request::Logs).await? {
                 for l in lines {
-                    println!("{l}");
+                    println!("{}", v2baloot_core::util::clean_text(&l, 4000));
                 }
             }
         }

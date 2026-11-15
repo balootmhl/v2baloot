@@ -42,7 +42,13 @@ const TABLE: &str = "2022";
 const PREFS: [&str; 3] = ["9000", "9001", "9002"];
 const TUN_ADDR4: &str = "172.19.0.1/30";
 const TUN_ADDR6: &str = "fdfe:dcba:9876::1/126";
-const LOG_LEVELS: &[&str] = &["debug", "info", "warning", "error", "none"];
+/// The root-side xray logs to the system journal, which other users (wheel/adm) can read; at
+/// info/debug it would record every connection target of every user, so cap it at warning.
+const LOG_LEVELS: &[&str] = &["warning", "error", "none"];
+// Absolute paths: the root helper never resolves programs through PATH.
+const XRAY: &str = "/usr/bin/xray";
+const SETPRIV: &str = "/usr/bin/setpriv";
+const XRAY_USER: &str = "v2baloot-tun";
 const RUN_DIR: &str = "/run/v2baloot";
 const MAX_REQUEST: u64 = 1 << 20;
 
@@ -271,7 +277,7 @@ pub async fn is_active() -> bool {
 // ----------------------------------------------------------------------- root helper side
 
 async fn cmd(program: &str, args: &[&str]) -> Result<()> {
-    let out = Command::new(program)
+    let out = Command::new(format!("/usr/bin/{program}"))
         .args(args)
         .output()
         .await
@@ -457,22 +463,23 @@ async fn stop_xray(child: &mut tokio::process::Child) {
 /// Xray parses untrusted network data: run it as `nobody` with only the network capabilities
 /// it needs (TUN device, SO_MARK).
 async fn spawn_xray() -> Result<tokio::process::Child> {
-    let mut cmd = if Path::new("/usr/bin/setpriv").exists() {
-        let nobody = passwd_by_name("nobody").context("user nobody not found")?;
-        let mut c = Command::new("/usr/bin/setpriv");
-        c.arg(format!("--reuid={}", nobody.uid))
-            .arg(format!("--regid={}", nobody.gid))
-            .arg("--clear-groups")
-            .arg("--inh-caps=-all,+net_admin,+net_raw")
-            .arg("--ambient-caps=-all,+net_admin,+net_raw")
-            .arg("--bounding-set=-all,+net_admin,+net_raw")
-            .arg("xray");
-        c
-    } else {
-        warn!("setpriv not found; running xray as root");
-        Command::new("xray")
-    };
-    cmd.args(["run", "-c", "stdin:"])
+    // Dedicated system user (packaging/sysusers.d); `nobody` only as a fallback.
+    let user = passwd_by_name(XRAY_USER)
+        .or_else(|| passwd_by_name("nobody"))
+        .context("neither the v2baloot-tun nor the nobody user exists")?;
+    if !Path::new(SETPRIV).exists() {
+        // Never fall back to running xray as root.
+        bail!("{SETPRIV} is missing (util-linux); refusing to run xray as root");
+    }
+    Command::new(SETPRIV)
+        .arg(format!("--reuid={}", user.uid))
+        .arg(format!("--regid={}", user.gid))
+        .arg("--clear-groups")
+        .arg("--inh-caps=-all,+net_admin,+net_raw")
+        .arg("--ambient-caps=-all,+net_admin,+net_raw")
+        .arg("--bounding-set=-all,+net_admin,+net_raw")
+        .arg(XRAY)
+        .args(["run", "-c", "stdin:"])
         .stdin(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -597,7 +604,7 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
 }
 
 async fn ip_batch(family: &str, script: &str) -> Result<()> {
-    let mut child = Command::new("ip")
+    let mut child = Command::new("/usr/bin/ip")
         .args([family, "-force", "-batch", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

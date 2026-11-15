@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- TUN stop no longer hangs for 10 s with DNS broken afterwards. The unit lacked `CAP_KILL`, so the helper could not stop its unprivileged Xray. Cleanup now also resets systemd-resolved's server state.
+
+### Security
+- Text from subscriptions and share links (server names, titles, errors) is stripped of control characters and bidi overrides. This closes a terminal escape injection (e.g. OSC 52 clipboard writes) in the TUI and CLI, and spoofing in notifications and the tray tooltip.
+- Subscription downloads are capped at 8 MB and 5000 servers, and parsing runs off the async workers.
+- Redirects are limited: no https→http and no redirects to local addresses.
+- Servers that point at this machine are ignored when they come from a subscription.
+- A warning is shown for `http://` subscription links.
+- A changed subscription never silently switches you to a different server.
+- "Allow LAN" proxies can no longer reach this machine's loopback services.
+- The exit IP lookup uses HTTPS only, with validated and size-capped responses.
+- IPC socket:
+  - request size limit, idle timeout and connection cap;
+  - clients check that the socket belongs to their own user;
+  - settings are validated before they are saved.
+- Credentials files are always written with mode 0600 in 0700 directories.
+- Root helper:
+  - Xray runs as a dedicated `v2baloot-tun` system user;
+  - it refuses to run Xray as root if `setpriv` is missing;
+  - programs are called by absolute path;
+  - the journal log level is capped at warning;
+  - extra systemd sandboxing (device policy, clock, kernel logs, SUID…).
+- `install.sh` no longer passes `--noconfirm` to the AUR helper, so you see the `xray-bin` PKGBUILD before it is installed.
+
 ## v0.1.0-beta.1 — 2026-11-15
 
 ### New look

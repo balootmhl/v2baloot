@@ -48,7 +48,9 @@ install_package() {
       exit 1
     fi
     say "Installing xray from the AUR (xray-bin) with $aur…"
-    "$aur" -S --needed --noconfirm xray-bin
+    # No --noconfirm: the AUR helper shows the PKGBUILD for review — its xray binary later
+    # runs under a root unit.
+    "$aur" -S --needed xray-bin
   fi
   # No --needed: a rebuild with the same pkgver must still replace the installed binaries.
   (cd packaging && makepkg -si --noconfirm)

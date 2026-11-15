@@ -14,6 +14,7 @@ use ratatui::widgets::ListState;
 use tokio::sync::mpsc;
 
 use v2baloot_core::ipc::{Client, Event, NoticeLevel, Reply, Request};
+use v2baloot_core::util::clean_text;
 use v2baloot_core::{Server, Status, Subscription};
 
 use crate::launch;
@@ -164,11 +165,11 @@ impl App {
     }
 
     fn info(&mut self, m: impl Into<String>) {
-        self.message = Some((m.into(), false));
+        self.message = Some((clean_text(&m.into(), 500), false));
     }
 
     fn error(&mut self, m: impl Into<String>) {
-        self.message = Some((m.into(), true));
+        self.message = Some((clean_text(&m.into(), 500), true));
     }
 
     fn refresh(&mut self) {
@@ -247,7 +248,7 @@ impl App {
                 }
             }
             Msg::Logs(lines) => {
-                self.logs = lines;
+                self.logs = lines.iter().map(|l| clean_text(l, 4000)).collect();
                 if matches!(self.popup, Popup::None) {
                     let scroll = self.logs.len().saturating_sub(10) as u16;
                     self.popup = Popup::Logs { scroll };

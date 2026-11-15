@@ -30,9 +30,56 @@ pub async fn fetch(url: &str, user_agent: &str, proxy: Option<&str>) -> Result<F
     }
 }
 
+/// Largest subscription body we accept (real ones are a few hundred KB at most).
+const MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// Redirects: at most 5, never from https down to http, never to the user's own machine.
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 5 {
+            return attempt.error("too many redirects");
+        }
+        let was_https = attempt
+            .previous()
+            .last()
+            .is_some_and(|u| u.scheme() == "https");
+        if was_https && attempt.url().scheme() != "https" {
+            return attempt.error("refusing to follow an https → http redirect");
+        }
+        let local = match attempt.url().host() {
+            Some(url::Host::Ipv4(ip)) => {
+                ip.is_loopback() || ip.is_unspecified() || ip.is_link_local()
+            }
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            None => true,
+        };
+        if local {
+            return attempt.error("refusing to redirect to a local address");
+        }
+        attempt.follow()
+    })
+}
+
+/// Read a response body, refusing anything larger than `max` bytes.
+pub async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<String> {
+    if resp.content_length().is_some_and(|n| n as usize > max) {
+        bail!("response too large");
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if buf.len() + chunk.len() > max {
+            bail!("response too large (over {} MB)", max / (1024 * 1024));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 async fn fetch_once(url: &str, user_agent: &str, proxy: Option<&str>) -> Result<FetchResult> {
     let mut b = reqwest::Client::builder()
         .user_agent(user_agent)
+        .redirect(redirect_policy())
         .timeout(Duration::from_secs(20))
         .connect_timeout(Duration::from_secs(8));
     b = match proxy {
@@ -54,8 +101,18 @@ async fn fetch_once(url: &str, user_agent: &str, proxy: Option<&str>) -> Result<
         .get("profile-title")
         .and_then(|v| v.to_str().ok())
         .and_then(parse_title);
-    let body = resp.text().await?;
-    let outcome = parse_body(&body);
+    let body = read_capped(resp, MAX_BODY).await?;
+    // Parsing thousands of links is CPU work; keep it off the async workers.
+    let mut outcome = tokio::task::spawn_blocking(move || parse_body(&body)).await?;
+    // A subscription must not point the client at this machine (loopback, link-local…).
+    let before = outcome.servers.len();
+    outcome.servers.retain(|s| !s.is_local_target());
+    if outcome.servers.len() < before {
+        outcome.errors.push(format!(
+            "{} server(s) pointing at local addresses were ignored",
+            before - outcome.servers.len()
+        ));
+    }
     if outcome.servers.is_empty() {
         if outcome.errors.is_empty() {
             bail!("no supported servers in subscription");
@@ -115,7 +172,7 @@ fn parse_title(h: &str) -> Option<String> {
         Some(b) => b64decode_str(b)?,
         None => h.to_string(),
     };
-    Some(t.trim().to_string()).filter(|t| !t.is_empty())
+    Some(crate::util::clean_text(&t, 60)).filter(|t| !t.is_empty())
 }
 
 #[cfg(test)]
@@ -138,6 +195,25 @@ mod tests {
         let links = "trojan://a@a.example.com:443#a\r\ntrojan://b@b.example.com:443#b\r\n";
         assert_eq!(parse_body(&b64encode(links.as_bytes())).servers.len(), 2);
         assert_eq!(parse_body(links).servers.len(), 2);
+    }
+
+    #[test]
+    fn local_targets_flagged() {
+        for (l, local) in [
+            ("trojan://p@127.0.0.1:443", true),
+            ("trojan://p@localhost:443", true),
+            ("trojan://p@[::1]:443", true),
+            ("trojan://p@169.254.1.1:443", true),
+            ("trojan://p@0.0.0.0:443", true),
+            ("trojan://p@192.168.1.10:443", false),
+            ("trojan://p@example.com:443", false),
+        ] {
+            assert_eq!(
+                crate::link::parse(l).unwrap().is_local_target(),
+                local,
+                "{l}"
+            );
+        }
     }
 
     #[test]

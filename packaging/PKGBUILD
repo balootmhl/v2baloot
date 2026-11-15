@@ -48,6 +48,7 @@ package() {
   cd "$root/packaging"
   install -Dm644 systemd/v2baloot.service "$pkgdir/usr/lib/systemd/user/v2baloot.service"
   install -Dm644 systemd/v2baloot-tun@.service "$pkgdir/usr/lib/systemd/system/v2baloot-tun@.service"
+  install -Dm644 sysusers/v2baloot.conf "$pkgdir/usr/lib/sysusers.d/v2baloot.conf"
   # rules.d belongs to polkit as 750 root:polkitd (gid 102); match it to avoid pacman warnings.
   install -d -m750 -o root -g 102 "$pkgdir/usr/share/polkit-1/rules.d"
   install -m644 polkit/50-v2baloot.rules "$pkgdir/usr/share/polkit-1/rules.d/50-v2baloot.rules"
