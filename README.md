@@ -2,7 +2,7 @@
 
 An Xray (V2Ray) client for [Omarchy](https://omarchy.org) (Arch Linux + Hyprland). One background daemon owns the connection; the GTK4 window, tray icon, terminal UI, Waybar module, Walker menu and CLI all talk to it, so closing the window keeps you connected.
 
-> **Status: beta (`v0.1.0-beta.1`).** Proxy and TUN mode work on a real Omarchy install. The redesigned window, tray, notification and Waybar icons are new in this beta. Please report what breaks.
+> **Status: beta (`v0.1.0-beta.2`).** Proxy and TUN mode work on a real Omarchy install. This release fixes a TUN stop hang that broke DNS, hardens security after a full review, and makes installs/updates much faster. Please report what breaks.
 
 | | |
 |---|---|
@@ -55,6 +55,15 @@ v2baloot connect 3        # connect by list number, name, or id
 
 - **Proxy**: v2baloot sets the proxy for GTK apps (gsettings) and for apps you launch afterwards (systemd user environment and Hyprland env). Apps that were already open need a restart. Terminal tools can use `socks5h://127.0.0.1:10808` directly.
 - **TUN**: all traffic, including terminal tools and apps that ignore proxy settings, goes through the tunnel (IPv6 too; if it can't be tunnelled, it's blocked rather than leaked). The `v2baloot-tun@<user>.service` system unit sets up routing as root and runs Xray's native TUN as `nobody` with only network capabilities. The polkit rule lets members of `wheel` (the Omarchy default) start it without a password from Waybar, the tray or a keybinding. DNS is also sent through the proxy. Only one user on the machine can use TUN mode at a time.
+
+## Security notes
+
+- **TUN mode is system-wide.** While it is on, every user's and service's traffic on the machine (and DNS) goes through the selected server. It is started by a root unit that wheel members may start/stop for themselves without a password (polkit). Use it on single-user machines, or trust the other wheel users.
+- The root helper never runs a user-supplied config: it rebuilds the Xray config from the selected server only, runs Xray as the unprivileged `v2baloot-tun` user with just `CAP_NET_ADMIN`/`CAP_NET_RAW`, and logs at most warnings to the system journal.
+- **"Allow LAN connections"** opens the SOCKS/HTTP proxy to your network **without a password**; anyone on the same Wi-Fi can use your subscription. Traffic from it can never reach this machine's own loopback services. Leave it off on public networks.
+- **Use `https://` subscription links.** Over `http://`, anyone on the network can read the token and swap the servers; v2baloot warns when you add one.
+- Server names and other text from subscriptions are stripped of terminal escape sequences and bidi overrides; servers that point at this machine (127.0.0.1, localhost, link-local) are ignored when they come from a subscription.
+- Report security issues privately through GitHub's "Report a vulnerability" (Security tab) rather than a public issue.
 
 ## Files
 

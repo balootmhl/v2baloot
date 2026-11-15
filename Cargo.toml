@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/core", "crates/v2baloot", "crates/gui"]
 
 [workspace.package]
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2021"
 license = "MIT"
 authors = ["Moe Hein Latt <baloot.mhl@gmail.com>"]
@@ -25,6 +25,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
-lto = "thin"
-codegen-units = 1
+# Build speed over the last few percent of runtime speed: v2baloot spends its time waiting on the
+# network and Xray, and LTO + a single codegen unit made `makepkg` take ~10 minutes on a laptop.
+lto = false
+codegen-units = 16
 strip = true

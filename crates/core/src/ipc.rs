@@ -140,12 +140,25 @@ impl Client {
     }
 
     async fn connect(&self) -> Result<UnixStream> {
-        UnixStream::connect(&self.socket).await.map_err(|e| {
+        let stream = UnixStream::connect(&self.socket).await.map_err(|e| {
             anyhow!(
                 "cannot reach v2baloot daemon at {} ({e}). Start it with: systemctl --user start v2baloot",
                 self.socket.display()
             )
-        })
+        })?;
+        // Only talk to our own daemon: links, subscription URLs and settings go over this socket.
+        #[cfg(unix)]
+        {
+            let peer = stream.peer_cred()?.uid();
+            let me = crate::util::current_uid();
+            if peer != me {
+                bail!(
+                    "{} belongs to another user (uid {peer}); refusing to use it",
+                    self.socket.display()
+                );
+            }
+        }
+        Ok(stream)
     }
 
     /// Send a request; daemon-side errors become `Err`.

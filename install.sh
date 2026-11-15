@@ -48,10 +48,14 @@ install_package() {
       exit 1
     fi
     say "Installing xray from the AUR (xray-bin) with $aur…"
-    "$aur" -S --needed --noconfirm xray-bin
+    # No --noconfirm: the AUR helper shows the PKGBUILD for review — its xray binary later
+    # runs under a root unit.
+    "$aur" -S --needed xray-bin
   fi
   # No --needed: a rebuild with the same pkgver must still replace the installed binaries.
-  (cd packaging && makepkg -si --noconfirm)
+  # --nocheck: skip compiling the test suite (CI runs it); the build cache in target/makepkg
+  # makes later updates incremental.
+  (cd packaging && makepkg -si --noconfirm --nocheck)
   rm -rf packaging/src packaging/pkg packaging/*.pkg.tar.zst
   say "Enabling the user daemon…"
   systemctl --user daemon-reload

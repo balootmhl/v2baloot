@@ -114,9 +114,11 @@ impl Data {
 
     /// Add servers, skipping ids that already exist. Returns how many were added.
     pub fn add_servers(&mut self, servers: Vec<Server>) -> usize {
+        let mut ids: std::collections::HashSet<String> =
+            self.servers.iter().map(|s| s.id.clone()).collect();
         let mut n = 0;
         for s in servers {
-            if !self.servers.iter().any(|x| x.id == s.id) {
+            if ids.insert(s.id.clone()) {
                 self.servers.push(s);
                 n += 1;
             }
@@ -127,10 +129,15 @@ impl Data {
     /// Replace all servers of a subscription, keeping order and previous latency results.
     /// Returns how many servers the group now has.
     pub fn replace_group(&mut self, group: &str, mut servers: Vec<Server>) -> usize {
+        let old_latency: std::collections::HashMap<&str, &Option<crate::model::Latency>> = self
+            .servers
+            .iter()
+            .map(|o| (o.id.as_str(), &o.latency))
+            .collect();
         for s in &mut servers {
             s.group = Some(group.to_string());
-            if let Some(old) = self.servers.iter().find(|o| o.id == s.id) {
-                s.latency = old.latency.clone();
+            if let Some(l) = old_latency.get(s.id.as_str()) {
+                s.latency = (*l).clone();
             }
         }
         let insert_at = self
@@ -141,7 +148,9 @@ impl Data {
         self.servers.retain(|s| s.group.as_deref() != Some(group));
         let insert_at = insert_at.min(self.servers.len());
         // A server can't be both manual and in a group; drop duplicates from the new list.
-        servers.retain(|s| !self.servers.iter().any(|o| o.id == s.id));
+        let others: std::collections::HashSet<&str> =
+            self.servers.iter().map(|o| o.id.as_str()).collect();
+        servers.retain(|s| !others.contains(s.id.as_str()));
         let n = servers.len();
         self.servers.splice(insert_at..insert_at, servers);
         n
@@ -174,7 +183,19 @@ pub fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T> {
 }
 
 pub fn load_data(path: &Path) -> Result<Data> {
-    load_json(path)
+    let mut d: Data = load_json(path)?;
+    // Data written by older versions wasn't sanitized.
+    for s in &mut d.servers {
+        s.name = crate::util::clean_text(&s.name, 120);
+    }
+    for s in &mut d.subscriptions {
+        s.name = crate::util::clean_text(&s.name, 60);
+        s.last_error = s
+            .last_error
+            .as_deref()
+            .map(|e| crate::util::clean_text(e, 300));
+    }
+    Ok(d)
 }
 
 pub fn save_data(path: &Path, d: &Data) -> Result<()> {
@@ -186,6 +207,11 @@ pub fn save_data(path: &Path, d: &Data) -> Result<()> {
 pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
     let dir = path.parent().context("path has no parent")?;
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+    }
     let tmp = path.with_extension("tmp");
     {
         let mut opts = fs::OpenOptions::new();
@@ -200,6 +226,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> Result<()> {
         let mut f = opts
             .open(&tmp)
             .with_context(|| format!("writing {}", tmp.display()))?;
+        #[cfg(unix)]
+        if private {
+            // `mode` only applies to new files; a leftover temp file may be wider.
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
         f.write_all(bytes)?;
         f.sync_all()?;
     }

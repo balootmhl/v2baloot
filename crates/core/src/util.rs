@@ -116,6 +116,35 @@ mod tests {
     }
 }
 
+/// Make text from untrusted sources (server and subscription names, provider headers, error
+/// messages) safe to show anywhere — terminals, notifications, menus: control characters (C0,
+/// DEL, C1, which carry terminal escape sequences) become spaces, bidi overrides that can
+/// reorder what is displayed are dropped, and the length is capped (in characters).
+pub fn clean_text(s: &str, max_chars: usize) -> String {
+    let mut out = String::with_capacity(s.len().min(max_chars * 4));
+    let mut n = 0;
+    for c in s.chars() {
+        if n >= max_chars {
+            out.push('…');
+            break;
+        }
+        if c.is_control() {
+            if !out.ends_with(' ') {
+                out.push(' ');
+                n += 1;
+            }
+            continue;
+        }
+        if matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}')
+        {
+            continue;
+        }
+        out.push(c);
+        n += 1;
+    }
+    out.trim().to_string()
+}
+
 /// 🇸🇬 from "SG".
 pub fn country_flag(code: &str) -> Option<String> {
     let code = code.trim();
@@ -156,6 +185,18 @@ mod flag_tests {
     use super::*;
 
     #[test]
+    fn clean_text_strips_escapes_and_bidi() {
+        assert_eq!(
+            clean_text("a\u{1b}]52;c;ZXZpbA==\u{7}b", 100),
+            "a ]52;c;ZXZpbA== b"
+        );
+        assert_eq!(clean_text("x\u{202E}gnp.exe", 100), "xgnp.exe");
+        assert_eq!(clean_text("\u{9b}31m red", 100), "31m red");
+        assert_eq!(clean_text("abcdef", 3), "abc…");
+        assert_eq!(clean_text("🇸🇬 Singapore", 100), "🇸🇬 Singapore");
+    }
+
+    #[test]
     fn flags() {
         assert_eq!(country_flag("sg").as_deref(), Some("🇸🇬"));
         assert_eq!(country_flag("SGP"), None);
@@ -163,4 +204,14 @@ mod flag_tests {
         assert_eq!(flag_from_name("Tokyo"), None);
         assert_eq!(strip_flag("🇯🇵 | Tokyo 2"), "Tokyo 2");
     }
+}
+
+/// The calling process's uid.
+#[cfg(unix)]
+pub fn current_uid() -> u32 {
+    extern "C" {
+        fn getuid() -> u32;
+    }
+    // SAFETY: getuid has no preconditions and cannot fail.
+    unsafe { getuid() }
 }

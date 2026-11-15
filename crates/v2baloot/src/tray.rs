@@ -80,7 +80,10 @@ impl Tray for V2Tray {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "v2baloot".into(),
-            description: status_line(&self.status),
+            description: status_line(&self.status)
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;"),
             ..Default::default()
         }
     }
