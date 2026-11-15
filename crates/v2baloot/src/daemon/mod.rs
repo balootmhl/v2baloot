@@ -16,6 +16,7 @@ use v2baloot_core::ipc::{Event, NoticeLevel, Reply, Request};
 use v2baloot_core::latency::Tester;
 use v2baloot_core::paths::Paths;
 use v2baloot_core::store::{self, Data, Settings};
+use v2baloot_core::theme::Palette;
 use v2baloot_core::util::{fnv1a64, now_unix};
 use v2baloot_core::{
     link, subscription, xray, ConnState, Latency, Mode, Server, Status, Subscription,
@@ -30,6 +31,8 @@ pub struct Daemon {
     events: broadcast::Sender<Event>,
     logs: LogBuf,
     shutdown: Notify,
+    /// Current Omarchy theme palette; the tray re-renders its icon when it changes.
+    palette: tokio::sync::watch::Sender<Palette>,
 }
 
 struct Inner {
@@ -94,6 +97,7 @@ pub async fn run() -> Result<()> {
         events,
         logs: LogBuf::default(),
         shutdown: Notify::new(),
+        palette: tokio::sync::watch::channel(load_palette()).0,
     });
     info!("listening on {}", sock.display());
 
@@ -105,6 +109,10 @@ pub async fn run() -> Result<()> {
 
     tokio::spawn(Arc::clone(&daemon).stats_loop());
     tokio::spawn(Arc::clone(&daemon).subscription_loop());
+    if let Err(e) = crate::icons::write_notify_icon(&daemon.paths) {
+        warn!("notification icon: {e:#}");
+    }
+    tokio::spawn(Arc::clone(&daemon).theme_loop());
     if cfg!(target_os = "linux") && daemon.inner.lock().await.settings.tray {
         crate::tray::spawn(Arc::clone(&daemon));
     }
@@ -325,6 +333,34 @@ impl Daemon {
         let _ = self.events.send(ev);
     }
 
+    pub fn palette(&self) -> tokio::sync::watch::Receiver<Palette> {
+        self.palette.subscribe()
+    }
+
+    /// Re-tint the Waybar and tray icons whenever the Omarchy theme changes.
+    async fn theme_loop(self: Arc<Self>) {
+        let file = home_dir().map(|h| v2baloot_core::theme::theme_file(&h));
+        let mtime = |f: &Option<std::path::PathBuf>| {
+            f.as_ref()
+                .and_then(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
+        };
+        let mut last = None;
+        let mut first = true;
+        loop {
+            let now = mtime(&file);
+            if first || now != last {
+                first = false;
+                last = now;
+                let p = load_palette();
+                if let Err(e) = crate::icons::write_waybar_icons(&self.paths, &p) {
+                    warn!("waybar icons: {e:#}");
+                }
+                self.palette.send_replace(p);
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
     pub fn events(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
     }
@@ -405,9 +441,14 @@ impl Daemon {
         match res {
             Ok(()) => {
                 g.status.state = ConnState::Connected;
+                g.status.connected_since = Some(v2baloot_core::util::now_unix());
+                g.status.exit = None;
                 self.emit_status(&g);
                 if g.settings.notifications {
                     notify::send("Connected", &format!("{} · {}", server.name, mode.label()));
+                }
+                if g.settings.show_exit_ip {
+                    self.spawn_exit_lookup(&g);
                 }
                 Ok(())
             }
@@ -543,18 +584,53 @@ impl Daemon {
         }
         g.status.up_speed = 0;
         g.status.down_speed = 0;
+        g.status.connected_since = None;
+        g.status.exit = None;
         g.last_totals = None;
+    }
+
+    /// Find out where traffic exits (IP, country) through the tunnel, then publish it.
+    fn spawn_exit_lookup(self: &Arc<Self>, g: &Inner) {
+        let gen = g.generation;
+        let proxy = (g.data.mode == Mode::Proxy).then(|| {
+            format!(
+                "socks5h://{}:{}",
+                sysproxy::connect_host(&g.settings.listen),
+                g.settings.socks_port
+            )
+        });
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            match v2baloot_core::exitip::lookup(proxy.as_deref()).await {
+                Ok(info) => {
+                    let mut g = me.inner.lock().await;
+                    if g.generation == gen && g.status.is_connected() {
+                        g.status.exit = Some(info);
+                        me.emit_status(&g);
+                    }
+                }
+                Err(e) => warn!("exit IP lookup failed: {e:#}"),
+            }
+        });
     }
 
     pub async fn disconnect(&self) {
         let mut g = self.inner.lock().await;
         let was_active = g.status.is_active();
-        self.stop_locked(&mut g).await;
+        // Tell every front-end immediately; stopping xray / the TUN unit / the system proxy
+        // finishes in the background while we still hold the lock (so a reconnect waits).
         g.status.state = ConnState::Disconnected;
+        g.status.connected_since = None;
+        g.status.exit = None;
+        g.status.up_speed = 0;
+        g.status.down_speed = 0;
         self.emit_status(&g);
         if was_active && g.settings.notifications {
             notify::send("Disconnected", "v2baloot");
         }
+        let t0 = std::time::Instant::now();
+        self.stop_locked(&mut g).await;
+        tracing::debug!("teardown took {:?}", t0.elapsed());
     }
 
     async fn set_mode(self: &Arc<Self>, mode: Mode) -> Result<()> {
@@ -943,6 +1019,16 @@ fn resumed_from_sleep(
     let wall = now.0.duration_since(before.0).unwrap_or_default();
     let mono = now.1.saturating_duration_since(before.1);
     wall > mono + Duration::from_secs(10)
+}
+
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+fn load_palette() -> Palette {
+    home_dir()
+        .and_then(|h| v2baloot_core::theme::load(&h))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

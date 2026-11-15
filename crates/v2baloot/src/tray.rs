@@ -11,7 +11,9 @@ use v2baloot_core::ipc::{Event, Reply, Request};
 use v2baloot_core::{ConnState, Mode, Server, Status};
 
 use crate::daemon::Daemon;
+use crate::icons::{self, IconState};
 use crate::{launch, notify};
+use v2baloot_core::theme::Palette;
 
 const MAX_SERVERS: usize = 60;
 
@@ -26,6 +28,7 @@ struct V2Tray {
     status: Status,
     servers: Vec<Server>,
     tx: mpsc::UnboundedSender<Action>,
+    palette: Palette,
 }
 
 impl V2Tray {
@@ -59,14 +62,19 @@ impl Tray for V2Tray {
         "v2baloot".into()
     }
 
-    fn icon_name(&self) -> String {
-        match (&self.status.state, self.status.mode) {
-            (ConnState::Connected, Mode::Tun) => "v2baloot-tun-symbolic",
-            (ConnState::Connected, Mode::Proxy) => "v2baloot-connected-symbolic",
-            (ConnState::Error { .. }, _) => "v2baloot-error-symbolic",
-            _ => "v2baloot-disconnected-symbolic",
-        }
-        .into()
+    /// Hosts that can't resolve our icon names (Waybar's tray on many setups) still show
+    /// these: the "b" logo in the theme's text colour, rendered at two sizes.
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        let svg = icons::state_svg(IconState::of(&self.status), &self.palette);
+        [22, 44]
+            .into_iter()
+            .filter_map(|size| icons::render(&svg, size).ok())
+            .map(|pm| ksni::Icon {
+                width: pm.width() as i32,
+                height: pm.height() as i32,
+                data: icons::to_argb32(&pm),
+            })
+            .collect()
     }
 
     fn tool_tip(&self) -> ToolTip {
@@ -243,10 +251,12 @@ pub fn spawn(daemon: Arc<Daemon>) {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (status, servers) = daemon.snapshot().await;
         let mut events = daemon.events();
+        let mut palette_rx = daemon.palette();
         let tray = V2Tray {
             status,
             servers,
             tx,
+            palette: palette_rx.borrow().clone(),
         };
         let handle = match tray.spawn().await {
             Ok(h) => h,
@@ -300,7 +310,17 @@ pub fn spawn(daemon: Arc<Daemon>) {
         // Keep the tray in sync with daemon state.
         let mut last = None;
         loop {
-            match events.recv().await {
+            let ev = tokio::select! {
+                ev = events.recv() => ev,
+                changed = palette_rx.changed() => {
+                    if changed.is_ok() {
+                        let p = palette_rx.borrow_and_update().clone();
+                        handle.update(|t| t.palette = p).await;
+                    }
+                    continue;
+                }
+            };
+            match ev {
                 Ok(Event::Status { status }) => {
                     let key = tray_key(&status);
                     if last.as_ref() == Some(&key) {

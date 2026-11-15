@@ -74,11 +74,32 @@ integrate_hyprland() {
   fi
 }
 
+# Write (or replace) the v2baloot block in Waybar's style.css, pointing at the icons the daemon
+# renders under $XDG_CACHE_HOME. Older installs without markers are cleaned up too.
+install_waybar_css() {
+  local css="$1" cache="${XDG_CACHE_HOME:-$HOME/.cache}/v2baloot"
+  [[ -f $css ]] || return 0
+  command -v python3 >/dev/null || { warn "python3 not found; add /usr/share/v2baloot/waybar.css by hand."; return 0; }
+  backup "$css"
+  python3 - "$css" /usr/share/v2baloot/waybar.css "$cache" <<'PY'
+import re, sys
+path, tpl, cache = sys.argv[1:4]
+text = open(path).read()
+text = re.sub(r"\n?/\* >>> v2baloot >>>.*?<<< v2baloot <<< \*/\n?", "\n", text, flags=re.S)
+# legacy block (no markers): drop its comment and every #custom-v2baloot rule
+text = re.sub(r"/\*[^*]*v2baloot[^*]*\*+(?:[^/*][^*]*\*+)*/\n?", "", text)
+text = re.sub(r"[^{}]*#custom-v2baloot[^{}]*\{[^}]*\}\n?", "", text)
+block = open(tpl).read().replace("@CACHE@", cache)
+open(path, "w").write(text.rstrip() + "\n\n" + block)
+PY
+}
+
 integrate_waybar() {
   local cfg="$HOME/.config/waybar/config.jsonc" css="$HOME/.config/waybar/style.css"
   [[ -f $cfg ]] || { warn "No $cfg; skipping Waybar."; return; }
   if grep -q '"custom/v2baloot"' "$cfg"; then
-    say "Waybar already has the v2baloot module."
+    say "Waybar already has the v2baloot module; refreshing its style."
+    install_waybar_css "$css"
     return
   fi
   ask "Add the v2baloot indicator to Waybar?" || return 0
@@ -95,10 +116,7 @@ if n == 0:
 new = new.replace("{", "{\n  " + module.strip().replace("\n", "\n  ") + ",", 1)
 open(path, "w").write(new)
 PY
-  if [[ -f $css ]] && ! grep -q 'custom-v2baloot' "$css"; then
-    backup "$css"
-    { echo; cat /usr/share/v2baloot/waybar.css; } >>"$css"
-  fi
+  install_waybar_css "$css"
   if command -v omarchy-restart-waybar >/dev/null; then omarchy-restart-waybar >/dev/null 2>&1 || true
   else pkill -SIGUSR2 waybar 2>/dev/null || true; fi
   say "Waybar updated (backup saved next to the config)."

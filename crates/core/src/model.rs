@@ -333,6 +333,21 @@ pub struct Status {
     pub testing: bool,
     pub socks_port: u16,
     pub http_port: u16,
+    /// Unix time the current connection came up.
+    pub connected_since: Option<i64>,
+    /// Public IP / location as seen through the tunnel.
+    pub exit: Option<ExitInfo>,
+}
+
+/// Where traffic leaves the tunnel, as reported by an IP lookup service.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExitInfo {
+    pub ip: String,
+    pub country: String,
+    pub country_code: String,
+    pub city: String,
+    pub isp: String,
 }
 
 impl Status {

@@ -2,7 +2,7 @@
 
 An Xray (V2Ray) client for [Omarchy](https://omarchy.org) (Arch Linux + Hyprland). One background daemon owns the connection; the GTK4 window, tray icon, terminal UI, Waybar module, Walker menu and CLI all talk to it, so closing the window keeps you connected.
 
-> **Status: alpha (`v0.1.0-alpha.1`).** Proxy mode, the GUI, the TUI and the CLI have been tested end-to-end. TUN mode, the tray icon, the system proxy and the Arch package have not yet been tested on a real Omarchy install. Please report what breaks.
+> **Status: beta (`v0.1.0-beta.1`).** Proxy and TUN mode work on a real Omarchy install. The redesigned window, tray, notification and Waybar icons are new in this beta. Please report what breaks.
 
 | | |
 |---|---|

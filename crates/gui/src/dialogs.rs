@@ -388,6 +388,7 @@ fn merge_changed(target: &mut Settings, opened: &Settings, edited: &Settings) {
         waybar_show_name,
         conn_idle_secs,
         outbound_interface,
+        show_exit_ip,
     );
 }
 
@@ -461,9 +462,15 @@ fn show_preferences(ui: &Rc<Ui>, s: Settings) {
         "Show the server name next to the Waybar icon",
         s.waybar_show_name,
     );
+    let exit_ip = switch(
+        "Show exit IP",
+        "After connecting, look up the public IP and country through the tunnel",
+        s.show_exit_ip,
+    );
     desktop.add(&tray);
     desktop.add(&notifications);
     desktop.add(&waybar_name);
+    desktop.add(&exit_ip);
     general.add(&desktop);
     d.add(&general);
 
@@ -545,6 +552,7 @@ fn show_preferences(ui: &Rc<Ui>, s: Settings) {
         n.tray = tray.is_active();
         n.notifications = notifications.is_active();
         n.waybar_show_name = waybar_name.is_active();
+        n.show_exit_ip = exit_ip.is_active();
         n.socks_port = socks.value() as u16;
         n.http_port = http.value() as u16;
         n.api_port = api.value() as u16;
