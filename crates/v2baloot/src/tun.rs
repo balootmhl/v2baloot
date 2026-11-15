@@ -63,6 +63,13 @@ pub struct TunRequest {
     pub log_level: String,
     #[serde(default = "default_idle")]
     pub conn_idle_secs: u32,
+    /// Block internet traffic (instead of letting it bypass the tunnel) while Xray is down.
+    #[serde(default = "default_true")]
+    pub kill_switch: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_idle() -> u32 {
@@ -186,6 +193,7 @@ pub async fn start(settings: &Settings, server: &Server) -> Result<()> {
         bypass_private: settings.bypass_private,
         log_level: settings.log_level.clone(),
         conn_idle_secs: settings.conn_idle_secs,
+        kill_switch: settings.tun_kill_switch,
     };
     // Always the default XDG location: the root helper can't see our environment.
     write_atomic(
@@ -407,12 +415,82 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
         "starting xray (TUN) for {} via {}:{}",
         pw.name, req.server.address, req.server.port
     );
+    let first = start_xray(&cfg).await?;
+    if let Err(e) = async {
+        install_rules(req.kill_switch).await?;
+        attach_tun(&req).await
+    }
+    .await
+    {
+        let mut first = first;
+        stop_xray(&mut first).await;
+        cleanup().await;
+        return Err(e);
+    }
+    info!("TUN mode active");
+
+    // KillMode=mixed: SIGTERM reaches only us; we stop xray ourselves. With the kill switch on we
+    // also supervise xray: if it dies, the `unreachable` fallback route in our table keeps
+    // traffic from leaving outside the tunnel while we restart it.
+    let mut child = Some(first);
+    let result: Result<()> = 'run: loop {
+        let exited = match child.as_mut() {
+            Some(c) => tokio::select! {
+                st = c.wait() => Some(st.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string())),
+                _ = term.recv() => None,
+                _ = tokio::signal::ctrl_c() => None,
+            },
+            None => None,
+        };
+        let Some(desc) = exited else { break Ok(()) };
+        child = None;
+        if !req.kill_switch {
+            break Err(anyhow::anyhow!("xray exited ({desc})"));
+        }
+        warn!("xray exited ({desc}); traffic is blocked until it is back");
+        let mut attempt = 0;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(restart_delay(attempt)) => {}
+                _ = term.recv() => break 'run Ok(()),
+            }
+            attempt += 1;
+            match start_xray(&cfg).await {
+                Ok(mut c) => match attach_tun(&req).await {
+                    Ok(()) => {
+                        info!("xray restarted; traffic flows again");
+                        child = Some(c);
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("re-attaching the tunnel failed: {e:#}");
+                        stop_xray(&mut c).await;
+                    }
+                },
+                Err(e) => warn!("restarting xray failed: {e:#}"),
+            }
+        }
+    };
+    if let Some(mut c) = child {
+        stop_xray(&mut c).await;
+    }
+    cleanup().await;
+    let _ = std::fs::write(&clean_marker, b"");
+    result
+}
+
+/// Backoff between xray restarts under the kill switch: 1, 2, 4, 8, 16, 30, 30… seconds.
+fn restart_delay(attempt: u32) -> Duration {
+    Duration::from_secs((1u64 << attempt.min(5)).min(30))
+}
+
+/// Start xray (config on stdin) and wait for its TUN interface.
+async fn start_xray(cfg: &[u8]) -> Result<tokio::process::Child> {
     let mut child = spawn_xray().await?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&cfg).await?;
+        stdin.write_all(cfg).await?;
         // Dropping closes stdin so xray starts.
     }
-
     let iface = Path::new("/sys/class/net").join(TUN_NAME);
     let deadline = Instant::now() + Duration::from_secs(8);
     while !iface.exists() {
@@ -425,24 +503,7 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-
-    if let Err(e) = setup_routes(&req).await {
-        stop_xray(&mut child).await;
-        cleanup().await;
-        return Err(e);
-    }
-    info!("TUN mode active");
-
-    // KillMode=mixed: SIGTERM reaches only us; we stop xray ourselves.
-    let result = tokio::select! {
-        st = child.wait() => Err(anyhow::anyhow!("xray exited ({})", st.map(|s| s.to_string()).unwrap_or_default())),
-        _ = term.recv() => Ok(()),
-        _ = tokio::signal::ctrl_c() => Ok(()),
-    };
-    stop_xray(&mut child).await;
-    cleanup().await;
-    let _ = std::fs::write(&clean_marker, b"");
-    result
+    Ok(child)
 }
 
 /// Stop xray without ever hanging the unit's shutdown: it runs as `nobody`, so signalling it
@@ -486,19 +547,27 @@ async fn spawn_xray() -> Result<tokio::process::Child> {
         .context("starting xray")
 }
 
-async fn setup_routes(req: &TunRequest) -> Result<()> {
+/// Policy rules (once per session). Marked (xray's own) traffic uses the main table; LAN and other
+/// specific routes still win; everything else looks up our table, which holds the tunnel route and,
+/// with the kill switch, an `unreachable` fallback that takes over the instant the tunnel vanishes.
+async fn install_rules(kill_switch: bool) -> Result<()> {
     let mark = TUN_MARK.to_string();
-    cmd("ip", &["link", "set", TUN_NAME, "up"]).await?;
-    cmd_quiet("ip", &["addr", "add", TUN_ADDR4, "dev", TUN_NAME]).await;
-    cmd_quiet("ip", &["-6", "addr", "add", TUN_ADDR6, "dev", TUN_NAME]).await;
-
-    cmd(
-        "ip",
-        &[
-            "route", "replace", "default", "dev", TUN_NAME, "table", TABLE,
-        ],
-    )
-    .await?;
+    if kill_switch {
+        cmd(
+            "ip",
+            &[
+                "route",
+                "replace",
+                "unreachable",
+                "default",
+                "metric",
+                "1000",
+                "table",
+                TABLE,
+            ],
+        )
+        .await?;
+    }
     cmd(
         "ip",
         &[
@@ -521,31 +590,25 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
     )
     .await?;
 
-    // IPv6: into the tunnel if possible, otherwise blackhole it so it can't bypass the tunnel.
-    // (Both fail only when IPv6 is disabled entirely, in which case nothing can leak.)
-    let v6 = cmd(
+    // IPv6 rules go in whenever IPv6 is enabled. The v6 table always has an unreachable fallback
+    // (with or without the kill switch) so IPv6 can never bypass the tunnel.
+    if cmd(
         "ip",
         &[
-            "-6", "route", "replace", "default", "dev", TUN_NAME, "table", TABLE,
+            "-6",
+            "route",
+            "replace",
+            "unreachable",
+            "default",
+            "metric",
+            "1000",
+            "table",
+            TABLE,
         ],
     )
     .await
     .is_ok()
-        || cmd(
-            "ip",
-            &[
-                "-6",
-                "route",
-                "replace",
-                "unreachable",
-                "default",
-                "table",
-                TABLE,
-            ],
-        )
-        .await
-        .is_ok();
-    if v6 {
+    {
         cmd_quiet(
             "ip",
             &[
@@ -585,6 +648,28 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
             let _ = std::fs::write(rp, "2");
         }
     }
+    Ok(())
+}
+
+/// Point our table at a (new) TUN interface and give it DNS. Runs after every xray start.
+async fn attach_tun(req: &TunRequest) -> Result<()> {
+    cmd("ip", &["link", "set", TUN_NAME, "up"]).await?;
+    cmd_quiet("ip", &["addr", "add", TUN_ADDR4, "dev", TUN_NAME]).await;
+    cmd_quiet("ip", &["-6", "addr", "add", TUN_ADDR6, "dev", TUN_NAME]).await;
+    cmd(
+        "ip",
+        &[
+            "route", "replace", "default", "dev", TUN_NAME, "metric", "0", "table", TABLE,
+        ],
+    )
+    .await?;
+    cmd_quiet(
+        "ip",
+        &[
+            "-6", "route", "replace", "default", "dev", TUN_NAME, "metric", "0", "table", TABLE,
+        ],
+    )
+    .await;
 
     let dns = if req.tun_dns.parse::<IpAddr>().is_ok() {
         req.tun_dns.as_str()
@@ -598,8 +683,10 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
         cmd_quiet("resolvectl", &["default-route", TUN_NAME, "true"]).await;
     }
 
-    // Added last: the daemon treats this rule as "TUN is ready".
-    cmd("ip", &["rule", "add", "pref", PREFS[2], "lookup", TABLE]).await?;
+    // Added last (and only once): the daemon treats this rule as "TUN is ready".
+    if !routes_ready().await {
+        cmd("ip", &["rule", "add", "pref", PREFS[2], "lookup", TABLE]).await?;
+    }
     Ok(())
 }
 
@@ -685,6 +772,12 @@ mod tests {
     }
 
     #[test]
+    fn restart_backoff() {
+        let d: Vec<u64> = (0..8).map(|a| restart_delay(a).as_secs()).collect();
+        assert_eq!(d, [1, 2, 4, 8, 16, 30, 30, 30]);
+    }
+
+    #[test]
     fn pin_leaves_ips_alone() {
         let s = link::parse("trojan://pw@1.2.3.4:443?sni=x.com").unwrap();
         assert_eq!(pin_to_ip(&s, ip()), s);
@@ -701,6 +794,7 @@ mod tests {
             bypass_private: true,
             log_level: "warning".into(),
             conn_idle_secs: 30,
+            kill_switch: true,
         };
         assert!(validate(&req).is_ok());
         req.dns = vec!["localhost".into()];

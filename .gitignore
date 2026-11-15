@@ -3,3 +3,6 @@
 /packaging/*.pkg.tar.zst
 /packaging/src
 /packaging/pkg
+/packaging/aur/v2baloot-bin/*.pkg.tar.zst
+/packaging/aur/v2baloot-bin/src
+/packaging/aur/v2baloot-bin/pkg

@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build the Arch package
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install toolchain and libraries
+        run: pacman -Syu --noconfirm --needed base-devel rust gtk4 libadwaita git github-cli
+
+      - uses: actions/checkout@v4
+
+      - name: makepkg
+        # makepkg refuses to run as root. -d: xray is AUR-only, so skip dependency checks; the
+        # package still declares it.
+        run: |
+          useradd -m builder
+          chown -R builder "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging' && makepkg -d --nocheck --noconfirm"
+          cd packaging
+          sha256sum ./*.pkg.tar.zst | sed 's# \./# #' > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Publish to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd packaging
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            pre=""
+            case "$TAG" in *-*) pre="--prerelease" ;; esac
+            gh release create "$TAG" --title "$TAG" --notes "See CHANGELOG.md" $pre --verify-tag
+          fi
+          gh release upload "$TAG" ./*.pkg.tar.zst sha256sums.txt --clobber
