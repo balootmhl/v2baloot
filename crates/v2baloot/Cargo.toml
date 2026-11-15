@@ -21,3 +21,4 @@ ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 libc = "0.2"
 ksni = "0.3"
+resvg = { version = "0.45", default-features = false }

@@ -1,4 +1,5 @@
 mod daemon;
+mod icons;
 mod launch;
 mod menu;
 mod notify;

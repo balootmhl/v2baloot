@@ -10,6 +10,7 @@ pub struct Paths {
     pub data_dir: PathBuf,
     pub state_dir: PathBuf,
     pub runtime_dir: PathBuf,
+    pub cache_dir: PathBuf,
 }
 
 fn env_dir(var: &str) -> Option<PathBuf> {
@@ -38,6 +39,9 @@ impl Paths {
                 .unwrap_or_else(|| home.join(".local/state"))
                 .join(APP),
             runtime_dir,
+            cache_dir: env_dir("XDG_CACHE_HOME")
+                .unwrap_or_else(|| home.join(".cache"))
+                .join(APP),
         }
     }
 
@@ -48,7 +52,16 @@ impl Paths {
             data_dir: home.join(".local/share").join(APP),
             state_dir: home.join(".local/state").join(APP),
             runtime_dir: PathBuf::from("/run").join(APP),
+            cache_dir: home.join(".cache").join(APP),
         }
+    }
+
+    /// State icons for the Waybar module (referenced by absolute path from Waybar's CSS).
+    pub fn waybar_icon(&self, state: &str) -> PathBuf {
+        self.cache_dir.join("waybar").join(format!("{state}.png"))
+    }
+    pub fn notify_icon(&self) -> PathBuf {
+        self.runtime_dir.join("icon.png")
     }
 
     pub fn settings_file(&self) -> PathBuf {

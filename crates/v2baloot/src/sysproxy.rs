@@ -24,16 +24,20 @@ const VARS: &[&str] = &[
 ];
 const NO_PROXY: &str = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.local";
 
-async fn run(cmd: &str, args: &[&str]) {
-    match Command::new(cmd).args(args).output().await {
-        Ok(o) if !o.status.success() => {
-            debug!(
-                "{cmd} {args:?}: {}",
-                String::from_utf8_lossy(&o.stderr).trim()
-            )
+/// Copies its arguments up front so callers can pass temporaries and run several at once.
+fn run(cmd: &'static str, args: &[&str]) -> impl std::future::Future<Output = ()> {
+    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    async move {
+        match Command::new(cmd).args(&args).output().await {
+            Ok(o) if !o.status.success() => {
+                debug!(
+                    "{cmd} {args:?}: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                )
+            }
+            Err(e) => debug!("{cmd}: {e}"),
+            _ => {}
         }
-        Err(e) => debug!("{cmd}: {e}"),
-        _ => {}
     }
 }
 
@@ -87,49 +91,43 @@ pub async fn enable(s: &Settings, runtime_dir: &Path) {
         .collect();
 
     let assignments: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    let mut args = vec!["--user", "set-environment"];
-    args.extend(assignments.iter().map(String::as_str));
-    run("systemctl", &args).await;
-
+    let mut env_args = vec!["--user", "set-environment"];
+    env_args.extend(assignments.iter().map(String::as_str));
     let batch = pairs
         .iter()
         .map(|(k, v)| format!("keyword env {k},{v}"))
         .collect::<Vec<_>>()
         .join(" ; ");
-    run("hyprctl", &["--batch", &batch]).await;
 
     let port_http = s.http_port.to_string();
     let port_socks = s.socks_port.to_string();
     let g = "org.gnome.system.proxy";
-    run("gsettings", &["set", &format!("{g}.http"), "host", &h]).await;
-    run(
-        "gsettings",
-        &["set", &format!("{g}.http"), "port", &port_http],
-    )
-    .await;
-    run("gsettings", &["set", &format!("{g}.https"), "host", &h]).await;
-    run(
-        "gsettings",
-        &["set", &format!("{g}.https"), "port", &port_http],
-    )
-    .await;
-    run("gsettings", &["set", &format!("{g}.socks"), "host", &h]).await;
-    run(
-        "gsettings",
-        &["set", &format!("{g}.socks"), "port", &port_socks],
-    )
-    .await;
-    run(
-        "gsettings",
-        &[
-            "set",
-            g,
-            "ignore-hosts",
-            "['localhost', '127.0.0.0/8', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']",
-        ],
-    )
-    .await;
-    run("gsettings", &["set", g, "mode", "manual"]).await;
+    let (http_s, https_s, socks_s) = (
+        format!("{g}.http"),
+        format!("{g}.https"),
+        format!("{g}.socks"),
+    );
+    let gsettings = async {
+        // Hosts/ports in parallel, then flip the mode once they are in place.
+        futures::join!(
+            run("gsettings", &["set", &http_s, "host", &h]),
+            run("gsettings", &["set", &http_s, "port", &port_http]),
+            run("gsettings", &["set", &https_s, "host", &h]),
+            run("gsettings", &["set", &https_s, "port", &port_http]),
+            run("gsettings", &["set", &socks_s, "host", &h]),
+            run("gsettings", &["set", &socks_s, "port", &port_socks]),
+            run(
+                "gsettings",
+                &["set", g, "ignore-hosts", "['localhost', '127.0.0.0/8', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']"],
+            ),
+        );
+        run("gsettings", &["set", g, "mode", "manual"]).await;
+    };
+    futures::join!(
+        run("systemctl", &env_args),
+        run("hyprctl", &["--batch", &batch]),
+        gsettings
+    );
 }
 
 pub async fn disable(runtime_dir: &Path) {
@@ -139,17 +137,18 @@ pub async fn disable(runtime_dir: &Path) {
     }
     let mut args = vec!["--user", "unset-environment"];
     args.extend(VARS);
-    run("systemctl", &args).await;
     // Hyprland has no "unset"; an empty value means "no proxy" to virtually every client.
     let batch = VARS
         .iter()
         .map(|k| format!("keyword env {k},"))
         .collect::<Vec<_>>()
         .join(" ; ");
-    run("hyprctl", &["--batch", &batch]).await;
-    run(
-        "gsettings",
-        &["set", "org.gnome.system.proxy", "mode", "none"],
-    )
-    .await;
+    futures::join!(
+        run("systemctl", &args),
+        run("hyprctl", &["--batch", &batch]),
+        run(
+            "gsettings",
+            &["set", "org.gnome.system.proxy", "mode", "none"]
+        ),
+    );
 }

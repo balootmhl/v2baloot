@@ -1,7 +1,10 @@
 //! v2baloot GTK4 / libadwaita front-end.
 
+mod dashboard;
 mod dialogs;
+mod servers;
 mod theme;
+mod widgets;
 mod window;
 
 use std::sync::OnceLock;
@@ -57,6 +60,13 @@ fn main() -> glib::ExitCode {
             return;
         }
         let window = window::build(app);
+        // Development aid: V2BALOOT_SIZE=500x800 for screenshots of the narrow layout.
+        if let Some((w, h)) = std::env::var("V2BALOOT_SIZE").ok().and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        }) {
+            window.set_default_size(w, h);
+        }
         window.present();
         if let Ok(action) = std::env::var("V2BALOOT_DEBUG_ACTION") {
             let w = window.clone();

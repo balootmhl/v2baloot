@@ -189,6 +189,7 @@ pub async fn start(settings: &Settings, server: &Server) -> Result<()> {
     )?;
 
     let unit = unit_name()?;
+    wait_inactive(&unit).await;
     let out = Command::new("systemctl")
         .args(["start", "--no-ask-password", &unit])
         .output()
@@ -218,15 +219,39 @@ pub async fn start(settings: &Settings, server: &Server) -> Result<()> {
     }
 }
 
+/// Ask systemd to stop the TUN unit without waiting for the teardown; `start` waits for the unit
+/// to be fully inactive before starting it again.
 pub async fn stop() {
     if !cfg!(target_os = "linux") {
         return;
     }
     if let Ok(unit) = unit_name() {
         let _ = Command::new("systemctl")
-            .args(["stop", "--no-ask-password", &unit])
+            .args(["stop", "--no-block", "--no-ask-password", &unit])
             .status()
             .await;
+    }
+}
+
+/// `ActiveState` of the TUN unit (active, activating, deactivating, inactive, failed).
+async fn unit_state(unit: &str) -> String {
+    Command::new("systemctl")
+        .args(["show", "-p", "ActiveState", "--value", unit])
+        .output()
+        .await
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Wait for a previous (non-blocking) stop to finish so stale routes can't look "ready".
+async fn wait_inactive(unit: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let st = unit_state(unit).await;
+        if st == "inactive" || st == "failed" || st.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -336,10 +361,16 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
         }
         bail!("TUN mode is already active (for this or another user)");
     };
-    cleanup().await;
+    let clean_marker = Path::new(RUN_DIR).join("clean");
     if cleanup_only {
+        // ExecStopPost: nothing to do if the helper already cleaned up on a normal stop.
+        if std::fs::remove_file(&clean_marker).is_err() {
+            cleanup().await;
+        }
         return Ok(());
     }
+    let _ = std::fs::remove_file(&clean_marker);
+    cleanup().await;
 
     let pw = passwd_by_name(user).with_context(|| format!("user {user} not found"))?;
     let req = read_request(&Paths::for_home(&pw.home).tun_request(), pw.uid)?;
@@ -404,6 +435,7 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
     let _ = child.kill().await;
     let _ = child.wait().await;
     cleanup().await;
+    let _ = std::fs::write(&clean_marker, b"");
     result
 }
 
@@ -549,22 +581,35 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
     Ok(())
 }
 
+async fn ip_batch(family: &str, script: &str) -> Result<()> {
+    let mut child = Command::new("ip")
+        .args([family, "-force", "-batch", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("running ip -batch")?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(script.as_bytes()).await?;
+    }
+    child.wait().await?;
+    Ok(())
+}
+
 /// Remove everything `setup_routes` added. Idempotent; only called while holding the lock.
 async fn cleanup() {
-    for fam in ["-4", "-6"] {
-        for pref in PREFS {
-            // Rules can be duplicated if a previous run crashed half-way.
-            for _ in 0..5 {
-                if cmd("ip", &[fam, "rule", "del", "pref", pref])
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
+    // One `ip -batch` process per family instead of dozens of separate `ip` runs. Each rule is
+    // deleted a few times because a crashed run may have added duplicates; `-force` keeps going
+    // past "No such file or directory".
+    let mut script = String::new();
+    for pref in PREFS {
+        for _ in 0..3 {
+            script.push_str(&format!("rule del pref {pref}\n"));
         }
-        let _ = cmd("ip", &[fam, "route", "flush", "table", TABLE]).await;
     }
+    script.push_str(&format!("route flush table {TABLE}\n"));
+    let (v4, v6) = tokio::join!(ip_batch("-4", &script), ip_batch("-6", &script));
+    let _ = (v4, v6);
     let saved = Path::new(RUN_DIR).join("rp_filter.saved");
     if let Ok(v) = std::fs::read_to_string(&saved) {
         let _ = std::fs::write("/proc/sys/net/ipv4/conf/all/rp_filter", v.trim());
