@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0-beta.1 — 2026-11-15
 
 ### New look
 - Redesigned window: a dashboard with an animated connect ring, a session timer, a Proxy/TUN switch, and the current server.

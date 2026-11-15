@@ -1,7 +1,7 @@
 # Maintainer: Moe Hein Latt <baloot.mhl@gmail.com>
 # Local build: run `makepkg -si` inside this packaging/ directory.
 pkgname=v2baloot
-pkgver=0.1.0alpha1
+pkgver=0.1.0beta1
 pkgrel=1
 pkgdesc="Xray (V2Ray) client for Omarchy: GTK4 GUI, tray, TUI, Waybar and Walker integration"
 arch=('x86_64' 'aarch64')
