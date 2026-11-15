@@ -9,7 +9,10 @@ use v2baloot_core::ipc::{Client, Event};
 use v2baloot_core::util::human_speed;
 use v2baloot_core::{ConnState, Mode, Status};
 
-const ICON: &str = "󰖂";
+/// The "b" logo is drawn by Waybar CSS (`-gtk-icontheme("v2baloot-*-symbolic")`, see
+/// packaging/omarchy/waybar.css), so the text only needs to be non-empty — Waybar hides a custom
+/// module whose text is empty. A thin space keeps the module width to the icon.
+const ICON: &str = "\u{2009}";
 
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -34,7 +37,7 @@ pub fn render(status: Option<&Status>, show_name: bool) -> String {
         ConnState::Error { message } => ("error", format!("Error: {message}")),
     };
     let text = if show_name && st.is_active() {
-        format!("{ICON} {}", escape(&name))
+        format!(" {}", escape(&name))
     } else {
         ICON.to_string()
     };
@@ -95,5 +98,27 @@ pub async fn run() -> Result<()> {
         }
         emit(render(None, false));
         tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_is_never_empty_and_class_tracks_state() {
+        let off: serde_json::Value = serde_json::from_str(&render(None, false)).unwrap();
+        assert_eq!(off["class"], "offline");
+        assert!(!off["text"].as_str().unwrap().is_empty());
+
+        let st = Status {
+            state: ConnState::Connected,
+            mode: Mode::Tun,
+            server_name: Some("SG <1>".into()),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&render(Some(&st), true)).unwrap();
+        assert_eq!(v["class"], "tun");
+        assert_eq!(v["text"], " SG &lt;1&gt;");
     }
 }

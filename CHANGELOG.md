@@ -14,6 +14,11 @@ First public alpha.
 - **Front-ends**: GTK4/libadwaita window that follows the Omarchy theme, ratatui TUI, tray icon, Waybar module, Walker server menu and CLI.
 - **Connectivity**: connection timeouts match V2Box. The daemon reconnects automatically with backoff and restarts the connection after resume from sleep.
 
+### Look
+- New "b-tunnel" app icon: a tunnel whose tall left wall and floor form a "b".
+- Matching symbolic tray icons for connected, disconnected, TUN and error.
+- The Waybar module shows the same logo, drawn in the bar's text colour.
+
 ### Known limitations
 - TUN mode, the tray, the system proxy and the Arch package have not been tested on a real Omarchy install yet.
 - Requires Xray-core 26.x. Xray rejects `allowInsecure` and unencrypted VLESS to public IPs.
