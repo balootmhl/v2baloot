@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0-beta.2 — 2026-11-16
 
 ### Fixes
 - TUN stop no longer hangs for 10 s with DNS broken afterwards. The unit lacked `CAP_KILL`, so the helper could not stop its unprivileged Xray. Cleanup now also resets systemd-resolved's server state.
