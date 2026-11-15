@@ -1,7 +1,7 @@
 # Maintainer: Moe Hein Latt <baloot.mhl@gmail.com>
 # Local build: run `makepkg -si` inside this packaging/ directory.
 pkgname=v2baloot
-pkgver=0.1.0beta1
+pkgver=0.1.0beta2
 pkgrel=1
 pkgdesc="Xray (V2Ray) client for Omarchy: GTK4 GUI, tray, TUI, Waybar and Walker integration"
 arch=('x86_64' 'aarch64')
@@ -26,28 +26,33 @@ prepare() {
   cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
+# Keep build artifacts in the repo checkout (git-ignored) instead of $srcdir, so the next
+# `git pull && ./install.sh` only recompiles what changed.
+_target() { echo "$(_root)/target/makepkg"; }
+
 build() {
   cd "$(_root)"
   export RUSTUP_TOOLCHAIN=stable
-  export CARGO_TARGET_DIR="$srcdir/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo build --frozen --release --workspace
 }
 
 check() {
   cd "$(_root)"
   export RUSTUP_TOOLCHAIN=stable
-  export CARGO_TARGET_DIR="$srcdir/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo test --frozen --release -p v2baloot-core
 }
 
 package() {
   local root; root="$(_root)"
-  install -Dm755 "$srcdir/target/release/v2baloot" "$pkgdir/usr/bin/v2baloot"
-  install -Dm755 "$srcdir/target/release/v2baloot-gui" "$pkgdir/usr/bin/v2baloot-gui"
+  install -Dm755 "$(_target)/release/v2baloot" "$pkgdir/usr/bin/v2baloot"
+  install -Dm755 "$(_target)/release/v2baloot-gui" "$pkgdir/usr/bin/v2baloot-gui"
 
   cd "$root/packaging"
   install -Dm644 systemd/v2baloot.service "$pkgdir/usr/lib/systemd/user/v2baloot.service"
   install -Dm644 systemd/v2baloot-tun@.service "$pkgdir/usr/lib/systemd/system/v2baloot-tun@.service"
+  install -Dm644 sysusers/v2baloot.conf "$pkgdir/usr/lib/sysusers.d/v2baloot.conf"
   # rules.d belongs to polkit as 750 root:polkitd (gid 102); match it to avoid pacman warnings.
   install -d -m750 -o root -g 102 "$pkgdir/usr/share/polkit-1/rules.d"
   install -m644 polkit/50-v2baloot.rules "$pkgdir/usr/share/polkit-1/rules.d/50-v2baloot.rules"

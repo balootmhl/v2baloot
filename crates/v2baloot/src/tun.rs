@@ -42,7 +42,13 @@ const TABLE: &str = "2022";
 const PREFS: [&str; 3] = ["9000", "9001", "9002"];
 const TUN_ADDR4: &str = "172.19.0.1/30";
 const TUN_ADDR6: &str = "fdfe:dcba:9876::1/126";
-const LOG_LEVELS: &[&str] = &["debug", "info", "warning", "error", "none"];
+/// The root-side xray logs to the system journal, which other users (wheel/adm) can read; at
+/// info/debug it would record every connection target of every user, so cap it at warning.
+const LOG_LEVELS: &[&str] = &["warning", "error", "none"];
+// Absolute paths: the root helper never resolves programs through PATH.
+const XRAY: &str = "/usr/bin/xray";
+const SETPRIV: &str = "/usr/bin/setpriv";
+const XRAY_USER: &str = "v2baloot-tun";
 const RUN_DIR: &str = "/run/v2baloot";
 const MAX_REQUEST: u64 = 1 << 20;
 
@@ -271,7 +277,7 @@ pub async fn is_active() -> bool {
 // ----------------------------------------------------------------------- root helper side
 
 async fn cmd(program: &str, args: &[&str]) -> Result<()> {
-    let out = Command::new(program)
+    let out = Command::new(format!("/usr/bin/{program}"))
         .args(args)
         .output()
         .await
@@ -361,6 +367,8 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
         }
         bail!("TUN mode is already active (for this or another user)");
     };
+    // Listen for SIGTERM from the start, so a stop during setup still cleans up.
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let clean_marker = Path::new(RUN_DIR).join("clean");
     if cleanup_only {
         // ExecStopPost: nothing to do if the helper already cleaned up on a normal stop.
@@ -412,52 +420,66 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
             bail!("xray exited early ({st})");
         }
         if Instant::now() > deadline {
-            let _ = child.kill().await;
+            stop_xray(&mut child).await;
             bail!("{TUN_NAME} did not appear");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     if let Err(e) = setup_routes(&req).await {
-        let _ = child.kill().await;
+        stop_xray(&mut child).await;
         cleanup().await;
         return Err(e);
     }
     info!("TUN mode active");
 
     // KillMode=mixed: SIGTERM reaches only us; we stop xray ourselves.
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let result = tokio::select! {
         st = child.wait() => Err(anyhow::anyhow!("xray exited ({})", st.map(|s| s.to_string()).unwrap_or_default())),
         _ = term.recv() => Ok(()),
         _ = tokio::signal::ctrl_c() => Ok(()),
     };
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    stop_xray(&mut child).await;
     cleanup().await;
     let _ = std::fs::write(&clean_marker, b"");
     result
 }
 
+/// Stop xray without ever hanging the unit's shutdown: it runs as `nobody`, so signalling it
+/// needs CAP_KILL (granted by the unit). If that still fails, don't wait for an exit that won't
+/// come; systemd's final SIGKILL of the cgroup takes care of it.
+async fn stop_xray(child: &mut tokio::process::Child) {
+    if let Err(e) = child.start_kill() {
+        warn!("could not signal xray: {e}");
+    }
+    if tokio::time::timeout(Duration::from_secs(3), child.wait())
+        .await
+        .is_err()
+    {
+        warn!("xray did not exit in time; continuing with cleanup");
+    }
+}
+
 /// Xray parses untrusted network data: run it as `nobody` with only the network capabilities
 /// it needs (TUN device, SO_MARK).
 async fn spawn_xray() -> Result<tokio::process::Child> {
-    let mut cmd = if Path::new("/usr/bin/setpriv").exists() {
-        let nobody = passwd_by_name("nobody").context("user nobody not found")?;
-        let mut c = Command::new("/usr/bin/setpriv");
-        c.arg(format!("--reuid={}", nobody.uid))
-            .arg(format!("--regid={}", nobody.gid))
-            .arg("--clear-groups")
-            .arg("--inh-caps=-all,+net_admin,+net_raw")
-            .arg("--ambient-caps=-all,+net_admin,+net_raw")
-            .arg("--bounding-set=-all,+net_admin,+net_raw")
-            .arg("xray");
-        c
-    } else {
-        warn!("setpriv not found; running xray as root");
-        Command::new("xray")
-    };
-    cmd.args(["run", "-c", "stdin:"])
+    // Dedicated system user (packaging/sysusers.d); `nobody` only as a fallback.
+    let user = passwd_by_name(XRAY_USER)
+        .or_else(|| passwd_by_name("nobody"))
+        .context("neither the v2baloot-tun nor the nobody user exists")?;
+    if !Path::new(SETPRIV).exists() {
+        // Never fall back to running xray as root.
+        bail!("{SETPRIV} is missing (util-linux); refusing to run xray as root");
+    }
+    Command::new(SETPRIV)
+        .arg(format!("--reuid={}", user.uid))
+        .arg(format!("--regid={}", user.gid))
+        .arg("--clear-groups")
+        .arg("--inh-caps=-all,+net_admin,+net_raw")
+        .arg("--ambient-caps=-all,+net_admin,+net_raw")
+        .arg("--bounding-set=-all,+net_admin,+net_raw")
+        .arg(XRAY)
+        .args(["run", "-c", "stdin:"])
         .stdin(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -582,7 +604,7 @@ async fn setup_routes(req: &TunRequest) -> Result<()> {
 }
 
 async fn ip_batch(family: &str, script: &str) -> Result<()> {
-    let mut child = Command::new("ip")
+    let mut child = Command::new("/usr/bin/ip")
         .args([family, "-force", "-batch", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -618,6 +640,12 @@ async fn cleanup() {
     if Path::new("/sys/class/net").join(TUN_NAME).exists() {
         let _ = cmd("resolvectl", &["revert", TUN_NAME]).await;
     }
+    // While the tunnel was going away, systemd-resolved may have marked the real DNS servers as
+    // failing; make it forget that so name resolution works again immediately.
+    let _ = tokio::join!(
+        cmd("resolvectl", &["reset-server-features"]),
+        cmd("resolvectl", &["flush-caches"])
+    );
 }
 
 #[cfg(test)]

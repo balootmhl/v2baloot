@@ -19,8 +19,9 @@ RuntimeDirectory=v2baloot
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 # NET_*: routes, TUN, SO_MARK. DAC_READ_SEARCH: read the request in the user's home.
-# SETUID/SETGID/SETPCAP: setpriv dropping Xray to nobody with ambient NET_ADMIN.
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SETPCAP
+# SETUID/SETGID/SETPCAP: setpriv dropping Xray to the v2baloot-tun user with ambient NET_ADMIN.
+# KILL: stopping that Xray process (signalling another uid needs it).
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_KILL
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
@@ -32,3 +33,12 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 SystemCallArchitectures=native
 LockPersonality=yes
 MemoryMax=512M
+# Only the TUN device (plus the standard /dev/null etc.).
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+UMask=0077

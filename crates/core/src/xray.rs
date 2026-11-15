@@ -138,6 +138,22 @@ pub fn build_config(server: &Server, opts: &XrayOptions) -> Value {
         // DNS queries arriving on the TUN go through Xray's DNS module (which uses the proxy).
         rules.push(json!({ "type": "field", "inboundTag": ["tun"], "port": "53", "network": "udp", "outboundTag": "dns-out" }));
     }
+    let lan_exposed = opts.local_inbounds
+        && !opts
+            .listen
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if lan_exposed {
+        // "Allow LAN": other devices may use the (unauthenticated) proxy, but never to reach
+        // services that only listen on this machine's loopback (the stats API, dev servers…).
+        rules.push(json!({
+            "type": "field",
+            "inboundTag": ["socks", "http"],
+            "ip": ["127.0.0.0/8", "::1/128", "0.0.0.0/32"],
+            "outboundTag": "block",
+        }));
+    }
     if opts.bypass_private {
         rules.push(json!({ "type": "field", "ip": PRIVATE_CIDRS, "outboundTag": "direct" }));
     }
@@ -448,6 +464,36 @@ mod tests {
             cfg["outbounds"][0]["streamSettings"]["sockopt"]["interface"],
             "en0"
         );
+    }
+
+    #[test]
+    fn lan_exposed_proxy_cannot_reach_loopback() {
+        let cfg = build_config(
+            &reality(),
+            &XrayOptions {
+                listen: "0.0.0.0".into(),
+                ..Default::default()
+            },
+        );
+        let rules = cfg["routing"]["rules"].as_array().unwrap();
+        let block = rules
+            .iter()
+            .position(|r| r["outboundTag"] == "block")
+            .expect("block rule");
+        let direct = rules
+            .iter()
+            .position(|r| r["outboundTag"] == "direct")
+            .unwrap();
+        assert!(
+            block < direct,
+            "block must win over the private → direct rule"
+        );
+        let local = build_config(&reality(), &XrayOptions::default());
+        assert!(local["routing"]["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["outboundTag"] != "block"));
     }
 
     #[test]

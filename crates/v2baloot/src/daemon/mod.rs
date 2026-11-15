@@ -128,11 +128,24 @@ pub async fn run() -> Result<()> {
         }
     }
 
+    let conn_limit = Arc::new(tokio::sync::Semaphore::new(64));
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => { tokio::spawn(Arc::clone(&daemon).serve(stream)); }
+                Ok((stream, _)) => {
+                    // Cap concurrent clients; a misbehaving one can't exhaust the daemon.
+                    match Arc::clone(&conn_limit).try_acquire_owned() {
+                        Ok(permit) => {
+                            let d = Arc::clone(&daemon);
+                            tokio::spawn(async move {
+                                d.serve(stream).await;
+                                drop(permit);
+                            });
+                        }
+                        Err(_) => warn!("too many IPC connections; dropping one"),
+                    }
+                }
                 Err(e) => warn!("accept: {e}"),
             },
             _ = daemon.shutdown.notified() => break,
@@ -182,9 +195,13 @@ async fn write_reply(
 
 impl Daemon {
     async fn serve(self: Arc<Self>, stream: UnixStream) {
+        use tokio::io::AsyncReadExt;
         let (r, mut w) = stream.into_split();
-        let mut lines = BufReader::new(r).lines();
-        let Ok(Some(line)) = lines.next_line().await else {
+        // Requests are small; bound what a client may make us buffer, and how long it may idle.
+        let mut lines = BufReader::new(r.take(4 * 1024 * 1024)).lines();
+        let Ok(Ok(Some(line))) =
+            tokio::time::timeout(Duration::from_secs(10), lines.next_line()).await
+        else {
             return;
         };
         let req: Request = match serde_json::from_str(&line) {
@@ -239,7 +256,7 @@ impl Daemon {
         match self.handle_inner(req).await {
             Ok(r) => r,
             Err(e) => Reply::Error {
-                message: format!("{e:#}"),
+                message: v2baloot_core::util::clean_text(&format!("{e:#}"), 1000),
             },
         }
     }
@@ -454,7 +471,7 @@ impl Daemon {
             }
             Err(e) => {
                 self.stop_locked(&mut g).await;
-                let message = format!("{e:#}");
+                let message = v2baloot_core::util::clean_text(&format!("{e:#}"), 500);
                 g.status.state = ConnState::Error {
                     message: message.clone(),
                 };
@@ -522,6 +539,7 @@ impl Daemon {
             Some(e) => format!("{desc}: {}", xray_proc::clean_xray_error(&e)),
             None => desc,
         };
+        let reason = v2baloot_core::util::clean_text(&reason, 500);
         warn!("{reason}");
         g.xray = None;
         self.stop_locked(&mut g).await;
@@ -651,6 +669,20 @@ impl Daemon {
     }
 
     async fn set_settings(self: &Arc<Self>, new: Settings) -> Result<()> {
+        if new.listen.parse::<std::net::IpAddr>().is_err() {
+            bail!("listen must be an IP address");
+        }
+        if !["debug", "info", "warning", "error", "none"].contains(&new.log_level.as_str()) {
+            bail!("unknown log level");
+        }
+        if new.outbound_interface.as_deref().is_some_and(|i| {
+            i.len() > 15
+                || !i
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_-.@".contains(c))
+        }) {
+            bail!("invalid interface name");
+        }
         if new.socks_port == 0 || new.http_port == 0 || new.api_port == 0 {
             bail!("ports must be non-zero");
         }
@@ -740,6 +772,15 @@ impl Daemon {
         if !(url.starts_with("http://") || url.starts_with("https://")) {
             bail!("subscription URL must start with http:// or https://");
         }
+        if url.len() > 4096 || url::Url::parse(&url).is_err() {
+            bail!("invalid subscription URL");
+        }
+        if url.starts_with("http://") {
+            self.notice(
+                NoticeLevel::Error,
+                "This subscription uses plain http:// — anyone on the network can read your token and swap its servers. Ask your provider for an https:// link.",
+            );
+        }
         let id = format!("{:012x}", fnv1a64(url.as_bytes()) & 0xffff_ffff_ffff);
         {
             let mut g = self.inner.lock().await;
@@ -750,7 +791,7 @@ impl Daemon {
             let name = if name.trim().is_empty() {
                 format!("Subscription {n}")
             } else {
-                name.trim().to_string()
+                v2baloot_core::util::clean_text(&name, 60)
             };
             g.data.subscriptions.push(Subscription {
                 id: id.clone(),
@@ -806,19 +847,26 @@ impl Daemon {
                             .map(|e| format!("{}: {e}", sub.name)),
                     );
                     added += g.data.replace_group(&sub.id, r.outcome.servers);
-                    // Don't let Connect silently pick another server later; select one explicitly.
-                    let selected_ok = g
-                        .data
-                        .selected
-                        .as_deref()
-                        .is_some_and(|id| g.data.server(id).is_some());
-                    if !selected_ok {
-                        g.data.selected = g
-                            .data
-                            .servers
-                            .iter()
-                            .find(|s| s.group.as_deref() == Some(sub.id.as_str()))
-                            .map(|s| s.id.clone());
+                    match g.data.selected.clone() {
+                        // First subscription: start with its first server.
+                        None => {
+                            g.data.selected = g
+                                .data
+                                .servers
+                                .iter()
+                                .find(|s| s.group.as_deref() == Some(sub.id.as_str()))
+                                .map(|s| s.id.clone());
+                        }
+                        // The chosen server vanished: never silently switch the user to a
+                        // different (subscription-controlled) server — make them pick.
+                        Some(id) if g.data.server(&id).is_none() => {
+                            g.data.selected = None;
+                            self.notice(
+                                NoticeLevel::Info,
+                                "Your selected server was removed by the subscription update; choose another one",
+                            );
+                        }
+                        Some(_) => {}
                     }
                     let s = &mut g.data.subscriptions[idx];
                     s.updated_at = Some(now_unix());
@@ -834,9 +882,12 @@ impl Daemon {
                 }
                 Err(e) => {
                     failures += 1;
-                    let msg = format!("{e:#}");
+                    let msg = v2baloot_core::util::clean_text(&format!("{e:#}"), 300);
                     g.data.subscriptions[idx].last_error = Some(msg.clone());
-                    errors.push(format!("{}: {msg}", sub.name));
+                    errors.push(v2baloot_core::util::clean_text(
+                        &format!("{}: {msg}", sub.name),
+                        300,
+                    ));
                 }
             }
             self.save(&g);

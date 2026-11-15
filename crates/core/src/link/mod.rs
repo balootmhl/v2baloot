@@ -49,6 +49,30 @@ pub struct ParseOutcome {
 
 /// Parse any number of links separated by whitespace/newlines. If the text holds no `://` at all
 /// it is treated as base64 (raw subscription content).
+/// Most servers accepted from one blob of links (a subscription or a paste).
+pub const MAX_SERVERS: usize = 5000;
+/// Longer lines are not share links; skipping them bounds the work per line.
+const MAX_LINE: usize = 16 * 1024;
+const MAX_ERRORS: usize = 50;
+
+/// `scheme://host` of a link for error messages — never credentials or the rest of the link.
+fn link_label(line: &str) -> String {
+    let (scheme, rest) = line.split_once("://").unwrap_or(("?", ""));
+    let host = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(
+        if scheme.eq_ignore_ascii_case("vmess") || scheme.eq_ignore_ascii_case("ss") {
+            "…"
+        } else {
+            rest
+        },
+    );
+    let host: String = host
+        .chars()
+        .take_while(|c| !matches!(c, '/' | '?' | '#'))
+        .take(60)
+        .collect();
+    crate::util::clean_text(&format!("{}://{host}", scheme.to_ascii_lowercase()), 80)
+}
+
 pub fn parse_many(text: &str) -> ParseOutcome {
     let decoded;
     let text = if !text.contains("://") {
@@ -80,20 +104,37 @@ pub fn parse_many(text: &str) -> ParseOutcome {
                 vec![l]
             }
         });
+    let mut seen = std::collections::HashSet::new();
+    let push_err = |out: &mut ParseOutcome, e: String| {
+        if out.errors.len() < MAX_ERRORS {
+            out.errors.push(crate::util::clean_text(&e, 300));
+        }
+    };
     for line in pieces {
         if !line.contains("://") {
             continue;
         }
+        if line.len() > MAX_LINE {
+            push_err(
+                &mut out,
+                format!("{}: line too long, skipped", link_label(line)),
+            );
+            continue;
+        }
+        if out.servers.len() >= MAX_SERVERS {
+            push_err(
+                &mut out,
+                format!("more than {MAX_SERVERS} servers; the rest were ignored"),
+            );
+            break;
+        }
         match parse(line) {
             Ok(s) => {
-                if !out.servers.iter().any(|x| x.id == s.id) {
+                if seen.insert(s.id.clone()) {
                     out.servers.push(s);
                 }
             }
-            Err(e) => {
-                let short: String = line.chars().take(40).collect();
-                out.errors.push(format!("{short}…: {e:#}"));
-            }
+            Err(e) => push_err(&mut out, format!("{}: {e:#}", link_label(line))),
         }
     }
     out

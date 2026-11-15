@@ -212,6 +212,12 @@ impl Server {
         transport: Transport,
         security: Security,
     ) -> Server {
+        let name = crate::util::clean_text(&name, 120);
+        let name = if name.is_empty() {
+            format!("{address}:{port}")
+        } else {
+            name
+        };
         let mut s = Server {
             id: String::new(),
             name,
@@ -252,6 +258,34 @@ impl Server {
             s.push_str(self.security.kind.name());
         }
         s
+    }
+
+    /// Loopback, unspecified, link-local or multicast targets (and `localhost`): a share link from
+    /// a subscription has no business pointing the client at the user's own machine.
+    pub fn is_local_target(&self) -> bool {
+        let host = self.address.trim_end_matches('.').to_ascii_lowercase();
+        if host == "localhost" || host.ends_with(".localhost") {
+            return true;
+        }
+        match host.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V4(ip)) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_link_local()
+                    || ip.is_multicast()
+                    || ip.is_broadcast()
+            }
+            Ok(std::net::IpAddr::V6(ip)) => {
+                ip.is_loopback()
+                    || ip.is_unspecified()
+                    || ip.is_multicast()
+                    || (ip.segments()[0] & 0xffc0) == 0xfe80
+                    || ip
+                        .to_ipv4_mapped()
+                        .is_some_and(|v4| v4.is_loopback() || v4.is_unspecified())
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn latency_ms(&self) -> Option<u32> {

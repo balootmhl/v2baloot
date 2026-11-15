@@ -15,7 +15,18 @@ fn icon() -> String {
     }
 }
 
+/// mako (like most notification daemons) renders the body as Pango markup; names and errors come
+/// from subscriptions, so show them as text.
+fn escape(s: &str) -> String {
+    v2baloot_core::util::clean_text(s, 400)
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn spawn(urgency: &str, summary: &str, body: &str) {
+    let summary = escape(summary);
+    let body = escape(body);
     let icon = icon();
     let child = Command::new("notify-send")
         .args([
@@ -29,8 +40,8 @@ fn spawn(urgency: &str, summary: &str, body: &str) {
             "string:x-canonical-private-synchronous:v2baloot",
         ])
         .arg("--")
-        .arg(summary)
-        .arg(body)
+        .arg(&summary)
+        .arg(&body)
         .spawn();
     if let Ok(mut c) = child {
         // Reap it so we don't leave zombies behind.
