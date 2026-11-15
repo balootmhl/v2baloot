@@ -26,24 +26,28 @@ prepare() {
   cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
 }
 
+# Keep build artifacts in the repo checkout (git-ignored) instead of $srcdir, so the next
+# `git pull && ./install.sh` only recompiles what changed.
+_target() { echo "$(_root)/target/makepkg"; }
+
 build() {
   cd "$(_root)"
   export RUSTUP_TOOLCHAIN=stable
-  export CARGO_TARGET_DIR="$srcdir/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo build --frozen --release --workspace
 }
 
 check() {
   cd "$(_root)"
   export RUSTUP_TOOLCHAIN=stable
-  export CARGO_TARGET_DIR="$srcdir/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo test --frozen --release -p v2baloot-core
 }
 
 package() {
   local root; root="$(_root)"
-  install -Dm755 "$srcdir/target/release/v2baloot" "$pkgdir/usr/bin/v2baloot"
-  install -Dm755 "$srcdir/target/release/v2baloot-gui" "$pkgdir/usr/bin/v2baloot-gui"
+  install -Dm755 "$(_target)/release/v2baloot" "$pkgdir/usr/bin/v2baloot"
+  install -Dm755 "$(_target)/release/v2baloot-gui" "$pkgdir/usr/bin/v2baloot-gui"
 
   cd "$root/packaging"
   install -Dm644 systemd/v2baloot.service "$pkgdir/usr/lib/systemd/user/v2baloot.service"

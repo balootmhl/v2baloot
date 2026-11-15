@@ -5,6 +5,11 @@
 ### Fixes
 - TUN stop no longer hangs for 10 s with DNS broken afterwards. The unit lacked `CAP_KILL`, so the helper could not stop its unprivileged Xray. Cleanup now also resets systemd-resolved's server state.
 
+### Faster installs
+- Lighter release profile (no LTO, parallel codegen).
+- `makepkg` keeps its build cache in the checkout (`target/makepkg`), so updates only recompile what changed.
+- `install.sh` skips compiling the test suite.
+
 ### Security
 - Text from subscriptions and share links (server names, titles, errors) is stripped of control characters and bidi overrides. This closes a terminal escape injection (e.g. OSC 52 clipboard writes) in the TUI and CLI, and spoofing in notifications and the tray tooltip.
 - Subscription downloads are capped at 8 MB and 5000 servers, and parsing runs off the async workers.

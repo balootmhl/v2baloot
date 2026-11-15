@@ -25,6 +25,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
-lto = "thin"
-codegen-units = 1
+# Build speed over the last few percent of runtime speed: v2baloot spends its time waiting on the
+# network and Xray, and LTO + a single codegen unit made `makepkg` take ~10 minutes on a laptop.
+lto = false
+codegen-units = 16
 strip = true
