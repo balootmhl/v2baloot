@@ -361,6 +361,8 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
         }
         bail!("TUN mode is already active (for this or another user)");
     };
+    // Listen for SIGTERM from the start, so a stop during setup still cleans up.
+    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let clean_marker = Path::new(RUN_DIR).join("clean");
     if cleanup_only {
         // ExecStopPost: nothing to do if the helper already cleaned up on a normal stop.
@@ -412,31 +414,44 @@ pub async fn run_helper(user: &str, cleanup_only: bool) -> Result<()> {
             bail!("xray exited early ({st})");
         }
         if Instant::now() > deadline {
-            let _ = child.kill().await;
+            stop_xray(&mut child).await;
             bail!("{TUN_NAME} did not appear");
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     if let Err(e) = setup_routes(&req).await {
-        let _ = child.kill().await;
+        stop_xray(&mut child).await;
         cleanup().await;
         return Err(e);
     }
     info!("TUN mode active");
 
     // KillMode=mixed: SIGTERM reaches only us; we stop xray ourselves.
-    let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let result = tokio::select! {
         st = child.wait() => Err(anyhow::anyhow!("xray exited ({})", st.map(|s| s.to_string()).unwrap_or_default())),
         _ = term.recv() => Ok(()),
         _ = tokio::signal::ctrl_c() => Ok(()),
     };
-    let _ = child.kill().await;
-    let _ = child.wait().await;
+    stop_xray(&mut child).await;
     cleanup().await;
     let _ = std::fs::write(&clean_marker, b"");
     result
+}
+
+/// Stop xray without ever hanging the unit's shutdown: it runs as `nobody`, so signalling it
+/// needs CAP_KILL (granted by the unit). If that still fails, don't wait for an exit that won't
+/// come; systemd's final SIGKILL of the cgroup takes care of it.
+async fn stop_xray(child: &mut tokio::process::Child) {
+    if let Err(e) = child.start_kill() {
+        warn!("could not signal xray: {e}");
+    }
+    if tokio::time::timeout(Duration::from_secs(3), child.wait())
+        .await
+        .is_err()
+    {
+        warn!("xray did not exit in time; continuing with cleanup");
+    }
 }
 
 /// Xray parses untrusted network data: run it as `nobody` with only the network capabilities
@@ -618,6 +633,12 @@ async fn cleanup() {
     if Path::new("/sys/class/net").join(TUN_NAME).exists() {
         let _ = cmd("resolvectl", &["revert", TUN_NAME]).await;
     }
+    // While the tunnel was going away, systemd-resolved may have marked the real DNS servers as
+    // failing; make it forget that so name resolution works again immediately.
+    let _ = tokio::join!(
+        cmd("resolvectl", &["reset-server-features"]),
+        cmd("resolvectl", &["flush-caches"])
+    );
 }
 
 #[cfg(test)]
