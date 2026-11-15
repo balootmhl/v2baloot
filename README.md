@@ -15,7 +15,7 @@ An Xray (V2Ray) client for [Omarchy](https://omarchy.org) (Arch Linux + Hyprland
 ## Requirements
 
 - Omarchy or another Arch Linux + Hyprland setup with systemd-resolved
-- Xray-core **26.x or newer** (the `xray` package; TUN mode needs its native TUN inbound)
+- Xray-core **26.x or newer** from the AUR (`xray-bin` or `xray`; TUN mode needs its native TUN inbound)
 - Being in the `wheel` group for password-less TUN mode (the Omarchy default)
 
 ## Install (Omarchy)
@@ -26,9 +26,10 @@ git clone https://github.com/balootmhl/v2baloot.git && cd v2baloot
 ```
 
 `install.sh` does the following:
-1. Builds an Arch package with `makepkg -si`. Dependencies: `xray`, `gtk4`, `libadwaita`, `wl-clipboard`, `libnotify`.
-2. Runs `systemctl --user enable --now v2baloot` to start the daemon.
-3. Asks before adding the Waybar indicator and Hyprland keybindings. It backs up each config file first.
+1. Installs Xray-core from the AUR (`xray-bin`, via `yay` or `paru`) if it isn't installed yet.
+2. Builds an Arch package with `makepkg -si`. Dependencies: `xray`, `gtk4`, `libadwaita`, `wl-clipboard`, `libnotify`.
+3. Runs `systemctl --user enable --now v2baloot` to start the daemon.
+4. Asks before adding the Waybar indicator and Hyprland keybindings. It backs up each config file first.
 
 ## Usage
 

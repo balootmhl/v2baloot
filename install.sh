@@ -36,6 +36,20 @@ fi
 install_package() {
   say "Building and installing the v2baloot package (makepkg)…"
   command -v cargo >/dev/null || sudo pacman -S --needed --noconfirm rust
+  # xray is not in the official repos, only in the AUR. xray-bin (official release binary,
+  # provides `xray`) avoids a Go build.
+  if ! pacman -T xray >/dev/null; then
+    local aur=""
+    for h in yay paru; do
+      if command -v "$h" >/dev/null; then aur=$h; break; fi
+    done
+    if [[ -z $aur ]]; then
+      echo "xray is only available in the AUR. Install it first (e.g. 'yay -S xray-bin'), then re-run." >&2
+      exit 1
+    fi
+    say "Installing xray from the AUR (xray-bin) with $aur…"
+    "$aur" -S --needed --noconfirm xray-bin
+  fi
   # No --needed: a rebuild with the same pkgver must still replace the installed binaries.
   (cd packaging && makepkg -si --noconfirm)
   rm -rf packaging/src packaging/pkg packaging/*.pkg.tar.zst

@@ -7,6 +7,7 @@ pkgdesc="Xray (V2Ray) client for Omarchy: GTK4 GUI, tray, TUI, Waybar and Walker
 arch=('x86_64' 'aarch64')
 url="https://github.com/balootmhl/v2baloot"
 license=('MIT')
+# xray comes from the AUR (xray or xray-bin); install.sh installs xray-bin first.
 depends=('xray' 'gtk4' 'libadwaita' 'wl-clipboard' 'libnotify' 'polkit' 'systemd' 'util-linux' 'gcc-libs' 'glibc')
 makedepends=('cargo')
 optdepends=(
