@@ -16,7 +16,7 @@ jobs:
       - name: Install toolchain and libraries
         run: pacman -Syu --noconfirm --needed base-devel rust gtk4 libadwaita git github-cli
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: makepkg
         # makepkg refuses to run as root. -d: xray is AUR-only, so skip dependency checks; the
