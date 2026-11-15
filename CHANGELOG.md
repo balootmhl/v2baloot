@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 — 2026-11-16
+
+First stable release. Everything below plus the betas (installers, kill switch, security hardening, redesigned UI).
 
 ### TUN kill switch
 - In TUN mode, if Xray stops, internet traffic is blocked instead of leaving outside the tunnel. The root helper restarts Xray on its own (1–30 s backoff), and the app shows "connecting" until it's back. It is on by default; Preferences → Kill switch.
